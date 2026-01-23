@@ -8,19 +8,19 @@
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- IMPORTANTE: A ordem dos scripts abaixo é fundamental para evitar erros -->
+    <!-- VERSÕES MAIS ESTÁVEIS (CDNJS) -->
     <!-- 1. React e ReactDOM -->
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin></script>
     
-    <!-- 2. Prop-types (Obrigatório para o Recharts funcionar neste modo) -->
-    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <!-- 2. Prop-types (Necessário para o Recharts) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
     
     <!-- 3. Recharts (Gráficos) -->
-    <script src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
     
-    <!-- 4. Babel (Compilador JSX) -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- 4. Babel -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
 
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; }
@@ -34,9 +34,11 @@
     <script type="text/babel">
         // Garante que as bibliotecas carregaram
         const { useState, useEffect, useMemo, useRef } = React;
-        const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } = Recharts;
-
-        // --- ÍCONES SVG ---
+        
+        // Tenta pegar o Recharts de forma segura
+        const RechartsObj = window.Recharts || null;
+        
+        // Ícones SVG
         const Icons = {
             Users: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
             BookOpen: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>,
@@ -46,18 +48,10 @@
             CheckCircle: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
             ArrowRightLeft: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></svg>,
             BarChart3: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>,
-            FileSpreadsheet: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h2"/><path d="M8 17h2"/><path d="M14 13h2"/><path d="M14 17h2"/></svg>,
-            AlertCircle: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            AlertCircle: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>,
+            Info: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
         };
 
-        const COLORS = {
-            primary: '#004587',
-            secondary: '#F68B1F',
-            accent: '#00A4E0',
-            chart: ['#004587', '#F68B1F', '#00A4E0', '#FFBB00', '#2E2E2E', '#8884d8']
-        };
-
-        // --- DADOS MOCK (Exemplo) ---
         const MOCK_DATA = [
             { id: '202500029', curso: 'Administrativo', analista: 'Bianca', alunos: 31, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Sheila', instrutor2: 'Bruna', dataTransferencia: '2026-02-04' },
             { id: '202500118', curso: 'Administrativo', analista: 'Bianca', alunos: 31, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Bruna', instrutor2: 'Jaqueline', dataTransferencia: '2026-02-04' },
@@ -73,6 +67,14 @@
             const [uploadError, setUploadError] = useState(null);
             const fileInputRef = useRef(null);
             const [isMockData, setIsMockData] = useState(true);
+            const [chartsLoaded, setChartsLoaded] = useState(!!RechartsObj);
+
+            useEffect(() => {
+                // Tenta detectar se o Recharts carregou atrasado
+                if (!chartsLoaded && window.Recharts) {
+                    setChartsLoaded(true);
+                }
+            }, [chartsLoaded]);
 
             // --- LÓGICA DE UPLOAD ---
             const handleFileUpload = (event) => {
@@ -91,6 +93,8 @@
                             const line = lines[i].trim();
                             if (!line) continue;
 
+                            // Tratamento para CSVs complexos (aspas) pode ser necessário,
+                            // mas assumindo CSV simples separado por vírgula conforme exemplo:
                             const cols = line.split(',');
                             
                             // Verifica se há dados suficientes (mínimo Coluna A)
@@ -99,20 +103,21 @@
                                 // Tratamento Data Transferência (Coluna I = Index 8)
                                 let rawDate = cols[8] ? cols[8].trim() : '';
                                 
-                                // Converte formato DD/MM/YYYY para YYYY-MM-DD se necessário
-                                if (rawDate.includes('/')) {
+                                // Validação: Se for "OK" ou vazio, não é data. 
+                                // Se for data DD/MM/YYYY converte.
+                                let isValidDate = false;
+
+                                if (rawDate.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
                                     const parts = rawDate.split('/');
-                                    if (parts.length === 3) {
-                                        rawDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
-                                    }
+                                    rawDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+                                    isValidDate = true;
+                                } else if (rawDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                                    isValidDate = true;
                                 }
-                                
-                                // Validação simples de data
-                                const isValidDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate);
 
                                 cleanData.push({
                                     id: cols[0]?.trim(),
-                                    curso: cols[1]?.trim() || 'Curso Desconhecido',
+                                    curso: cols[1]?.trim() || 'Desconhecido',
                                     analista: cols[2]?.trim(),
                                     alunos: parseInt(cols[3]?.trim()) || 0,
                                     inicio: cols[4]?.trim(),
@@ -125,7 +130,7 @@
                         }
 
                         if (cleanData.length === 0) {
-                            throw new Error("Não foi possível ler os dados.");
+                            throw new Error("Nenhum dado válido encontrado.");
                         }
 
                         setData(cleanData);
@@ -134,7 +139,7 @@
                         setActiveTab('list'); 
                     } catch (err) {
                         console.error("Erro CSV:", err);
-                        setUploadError("Erro ao processar o arquivo. Verifique se é um CSV válido.");
+                        setUploadError("Erro ao ler o arquivo. Verifique a formatação.");
                     }
                 };
 
@@ -142,7 +147,7 @@
                 event.target.value = null; 
             };
 
-            // --- PROCESSAMENTO DOS DADOS ---
+            // --- PROCESSAMENTO ---
             const processedData = useMemo(() => {
                 const today = new Date();
                 
@@ -151,9 +156,7 @@
                     let status = 'Inicial';
 
                     if (row.instrutor2 && row.dataTransferencia) {
-                        // Força interpretação da data local (adiciona hora para evitar problema de fuso UTC)
                         const transferDate = new Date(row.dataTransferencia + 'T00:00:00'); 
-                        
                         if (!isNaN(transferDate.getTime())) {
                             if (today >= transferDate) {
                                 currentInstructor = row.instrutor2;
@@ -174,51 +177,35 @@
                 });
             }, [data]);
 
-            // --- ESTATÍSTICAS DO DASHBOARD ---
             const instructorStats = useMemo(() => {
                 const stats = {};
-
                 processedData.forEach(row => {
                     const instrutor = row.instrutorAtual;
                     if (instrutor === 'Não Atribuído') return;
 
                     if (!stats[instrutor]) {
-                        stats[instrutor] = {
-                            nome: instrutor,
-                            totalAlunos: 0,
-                            totalTurmas: 0,
-                            cursos: {}
-                        };
+                        stats[instrutor] = { nome: instrutor, totalAlunos: 0, totalTurmas: 0, cursos: {} };
                     }
-
                     stats[instrutor].totalAlunos += parseInt(row.alunos || 0);
                     stats[instrutor].totalTurmas += 1;
-                    
                     const cursoTipo = row.curso || 'Outros';
                     stats[instrutor].cursos[cursoTipo] = (stats[instrutor].cursos[cursoTipo] || 0) + 1;
                 });
-
                 return Object.values(stats).sort((a,b) => b.totalAlunos - a.totalAlunos);
             }, [processedData]);
 
-            // --- LÓGICA DO ROBÔ (DISTRIBUIÇÃO) ---
+            // --- SIMULADOR ---
             const handleSimulate = () => {
                 const scores = instructorStats.map(inst => {
                     const loadScore = inst.totalAlunos * 1; 
                     const classScore = inst.totalTurmas * 15; 
                     const courseRepetitionScore = (inst.cursos[newClassCourse] || 0) * 50; 
-
                     return {
                         ...inst,
                         score: loadScore + classScore + courseRepetitionScore,
-                        details: {
-                            alunos: inst.totalAlunos,
-                            turmas: inst.totalTurmas,
-                            mesmoCurso: inst.cursos[newClassCourse] || 0
-                        }
+                        details: { alunos: inst.totalAlunos, turmas: inst.totalTurmas, mesmoCurso: inst.cursos[newClassCourse] || 0 }
                     };
                 });
-
                 scores.sort((a, b) => a.score - b.score);
                 setRecommendation(scores);
             };
@@ -229,53 +216,90 @@
                         <p className="text-gray-500 text-sm font-medium mb-1">{title}</p>
                         <h3 className="text-3xl font-bold text-gray-800">{value}</h3>
                     </div>
-                    <div className={`p-3 rounded-full text-white ${color}`}>
-                        <IconComponent />
-                    </div>
+                    <div className={`p-3 rounded-full text-white ${color}`}><IconComponent /></div>
                 </div>
             );
 
+            // Componente seguro para gráficos
+            const ChartsSection = () => {
+                if (!window.Recharts) {
+                    return (
+                        <div className="bg-yellow-50 border border-yellow-200 p-8 rounded-xl text-center text-yellow-800">
+                            <Icons.Info />
+                            <h3 className="text-lg font-bold mt-2">Visualização Gráfica Indisponível</h3>
+                            <p>Não foi possível carregar a biblioteca de gráficos. Verifique sua conexão.</p>
+                            <p className="text-sm mt-2">Você ainda pode usar a <strong>Lista</strong> e o <strong>Simulador</strong> normalmente.</p>
+                        </div>
+                    );
+                }
+
+                const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } = window.Recharts;
+
+                return (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-96">
+                            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Icons.BarChart3 /> Carga de Alunos</h3>
+                            <ResponsiveContainer width="100%" height="90%">
+                                <BarChart data={instructorStats} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
+                                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
+                                    <XAxis type="number" />
+                                    <YAxis dataKey="nome" type="category" width={80} tick={{fontSize: 11}} />
+                                    <Tooltip cursor={{fill: '#f4f6f8'}} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
+                                    <Bar dataKey="totalAlunos" fill="#004587" radius={[0, 4, 4, 0]} name="Alunos" barSize={20}>
+                                        {instructorStats.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={index % 2 === 0 ? '#004587' : '#F68B1F'} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-96">
+                            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Icons.BarChart3 /> Total de Turmas</h3>
+                            <ResponsiveContainer width="100%" height="90%">
+                                <BarChart data={instructorStats} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                                    <XAxis dataKey="nome" tick={{fontSize: 11}} />
+                                    <YAxis allowDecimals={false} />
+                                    <Tooltip cursor={{fill: '#f4f6f8'}} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
+                                    <Bar dataKey="totalTurmas" fill="#00A4E0" radius={[4, 4, 0, 0]} name="Turmas" barSize={30} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+                );
+            };
+
             return (
                 <div className="min-h-screen pb-10">
-                    <input 
-                        type="file" 
-                        ref={fileInputRef} 
-                        onChange={handleFileUpload} 
-                        accept=".csv,.txt" 
-                        className="hidden" 
-                    />
+                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".csv,.txt" className="hidden" />
 
-                    {/* Navbar */}
+                    {/* HEADER */}
                     <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-20">
                         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
                             <div className="flex items-center gap-2">
                                 <div className="bg-white p-2 rounded-lg border-l-4 border-orange-500">
-                                    <h1 className="text-2xl font-bold text-blue-900 tracking-tight">Senac <span className="text-orange-500">Portão</span></h1>
-                                    <p className="text-xs text-gray-500 font-medium tracking-widest uppercase">Distribuição de Turmas</p>
+                                    <h1 className="text-xl md:text-2xl font-bold text-blue-900 tracking-tight">Senac <span className="text-orange-500">Portão</span></h1>
                                 </div>
                             </div>
-                            
                             <nav className="flex items-center space-x-2 md:space-x-4">
                                 <button onClick={() => setActiveTab('dashboard')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'dashboard' ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'text-gray-500 hover:text-gray-700'}`}>Dashboard</button>
                                 <button onClick={() => setActiveTab('simulator')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'simulator' ? 'bg-orange-50 text-orange-700 border border-orange-200' : 'text-gray-500 hover:text-gray-700'}`}>Distribuir</button>
                                 <button onClick={() => setActiveTab('list')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'list' ? 'bg-gray-100 text-gray-700 border border-gray-200' : 'text-gray-500 hover:text-gray-700'}`}>Lista</button>
                                 <div className="h-6 w-px bg-gray-300 mx-2"></div>
                                 <button onClick={() => fileInputRef.current.click()} className="px-3 py-2 rounded-md text-sm font-medium bg-green-600 text-white hover:bg-green-700 shadow-sm transition-colors flex items-center gap-2">
-                                    <Icons.Upload /> <span>Importar CSV</span>
+                                    <Icons.Upload /> <span className="hidden sm:inline">Importar</span>
                                 </button>
                             </nav>
                         </div>
                     </header>
 
                     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                        
                         {isMockData && (
                             <div className="mb-6 bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg flex items-center gap-2 text-sm">
                                 <Icons.AlertCircle />
-                                <span><strong>Modo Demonstração:</strong> Dados de exemplo carregados. Clique em "Importar CSV" para carregar suas 77 turmas.</span>
+                                <span><strong>Modo Demonstração:</strong> Exibindo dados de exemplo. Clique em "Importar" para carregar suas 77 turmas.</span>
                             </div>
                         )}
-
                         {uploadError && (
                             <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center gap-2">
                                 <Icons.AlertCircle />
@@ -283,7 +307,7 @@
                             </div>
                         )}
 
-                        {/* VIEW: DASHBOARD */}
+                        {/* DASHBOARD */}
                         {activeTab === 'dashboard' && (
                             <div className="space-y-6 fade-in">
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -292,39 +316,8 @@
                                     <StatCard title="Instrutores" value={instructorStats.length} icon={Icons.School} color="bg-cyan-500" />
                                 </div>
 
-                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-96">
-                                        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Icons.BarChart3 /> Carga de Alunos por Instrutor</h3>
-                                        <ResponsiveContainer width="100%" height="90%">
-                                            <BarChart data={instructorStats} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
-                                                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
-                                                <XAxis type="number" />
-                                                <YAxis dataKey="nome" type="category" width={80} tick={{fontSize: 11}} />
-                                                <Tooltip cursor={{fill: '#f4f6f8'}} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
-                                                <Bar dataKey="totalAlunos" fill="#004587" radius={[0, 4, 4, 0]} name="Alunos" barSize={20}>
-                                                    {instructorStats.map((entry, index) => (
-                                                        <Cell key={`cell-${index}`} fill={index % 2 === 0 ? '#004587' : '#F68B1F'} />
-                                                    ))}
-                                                </Bar>
-                                            </BarChart>
-                                        </ResponsiveContainer>
-                                    </div>
+                                <ChartsSection />
 
-                                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-96">
-                                        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Icons.BarChart3 /> Qtd. de Turmas por Instrutor</h3>
-                                        <ResponsiveContainer width="100%" height="90%">
-                                            <BarChart data={instructorStats} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                                                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                                                <XAxis dataKey="nome" tick={{fontSize: 11}} />
-                                                <YAxis allowDecimals={false} />
-                                                <Tooltip cursor={{fill: '#f4f6f8'}} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
-                                                <Bar dataKey="totalTurmas" fill="#00A4E0" radius={[4, 4, 0, 0]} name="Turmas" barSize={30} />
-                                            </BarChart>
-                                        </ResponsiveContainer>
-                                    </div>
-                                </div>
-
-                                {/* MIX DE CURSOS */}
                                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
                                     <h3 className="text-lg font-bold text-gray-800 mb-6">Detalhamento: Mix de Cursos por Instrutor</h3>
                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -354,18 +347,16 @@
                             </div>
                         )}
 
-                        {/* VIEW: SIMULADOR */}
+                        {/* SIMULADOR */}
                         {activeTab === 'simulator' && (
                             <div className="max-w-4xl mx-auto space-y-8 fade-in">
                                 <div className="bg-gradient-to-r from-blue-900 to-blue-800 text-white p-8 rounded-2xl shadow-lg">
                                     <h2 className="text-2xl font-bold mb-2">Simulador de Distribuição</h2>
                                     <p className="text-blue-200 mb-6">O "Robô" analisa quem está com menos carga e menos turmas desse tipo.</p>
-                                    
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                                         <div>
                                             <label className="block text-sm font-medium text-blue-100 mb-1">Nome do Curso</label>
                                             <select value={newClassCourse} onChange={(e) => setNewClassCourse(e.target.value)} className="w-full bg-white/10 border border-blue-400 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-400 option:text-gray-800">
-                                                {/* Extrai cursos únicos dinamicamente */}
                                                 {[...new Set(processedData.map(d => d.curso))].sort().map(c => (
                                                     <option key={c} value={c} className="text-gray-800">{c}</option>
                                                 ))}
@@ -377,12 +368,10 @@
                                             <input type="number" value={newClassStudents} onChange={(e) => setNewClassStudents(Number(e.target.value))} className="w-full bg-white/10 border border-blue-400 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-400" />
                                         </div>
                                     </div>
-                                    
                                     <button onClick={handleSimulate} className="mt-6 w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-lg shadow-md transition-all flex items-center justify-center gap-2">
                                         <Icons.Search /> Encontrar Melhor Instrutor
                                     </button>
                                 </div>
-
                                 {recommendation && (
                                     <div className="space-y-4 fade-in">
                                         <div className="bg-white border-l-4 border-green-500 rounded-lg shadow-md p-6 relative overflow-hidden">
@@ -403,7 +392,6 @@
                                                 </div>
                                             </div>
                                         </div>
-
                                         <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
                                             <div className="bg-gray-50 px-6 py-3 border-b border-gray-200"><h4 className="font-semibold text-gray-700">Outras Opções (Ranking)</h4></div>
                                             <div className="divide-y divide-gray-100">
@@ -428,7 +416,7 @@
                             </div>
                         )}
 
-                        {/* VIEW: LISTA */}
+                        {/* LISTA */}
                         {activeTab === 'list' && (
                             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden fade-in">
                                 <div className="p-6 border-b border-gray-200 flex justify-between items-center">
