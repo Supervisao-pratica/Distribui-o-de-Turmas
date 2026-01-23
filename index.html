@@ -231,7 +231,7 @@
                     .sort();
             }, [data]);
 
-            // --- ESTATÍSTICAS POR INSTRUTOR (AGORA COM PROJEÇÃO FUTURA DETALHADA) ---
+            // --- ESTATÍSTICAS POR INSTRUTOR (AGORA COM CÁLCULO CUMULATIVO PARA LINHA DO TEMPO) ---
             const instructorStats = useMemo(() => {
                 const stats = {};
                 
@@ -242,13 +242,12 @@
                         totalAlunos: 0, 
                         totalTurmas: 0, 
                         analistas: new Set(), 
-                        cursos: {},          // Contagem atual por curso
+                        cursos: {},          
                         myClasses: [],       
                         receivedClasses: [], 
                         futureEvents: [],
                         futureTotal: 0,
-                        // CONTADORES DETALHADOS PARA TABELA
-                        detalheCursos: {} // { 'Adm': { atual: 0, entradas: 0, saidas: 0, final: 0 } }
+                        detalheCursos: {} 
                     };
                 });
 
@@ -276,13 +275,12 @@
                     }
                 });
 
-                // Passo 3: Popula EVENTOS e CALCULA FUTURO
+                // Passo 3: Popula EVENTOS
                 const targetDate = new Date(viewDate + 'T00:00:00');
 
                 data.forEach(row => {
                     if(!row) return;
                     
-                    // Popula listas
                     if (row.instrutor1 && stats[row.instrutor1] && !stats[row.instrutor1].myClasses.find(c => c.id === row.id)) {
                              const processed = processedData.find(p => p.id === row.id);
                              if(processed) stats[row.instrutor1].myClasses.push(processed);
@@ -327,18 +325,33 @@
                     }
                 });
 
-                // Passo 4: TOTALIZADORES
+                // Passo 4: TOTALIZADORES E CÁLCULO CUMULATIVO (RUNNING TOTAL)
                 Object.values(stats).forEach(inst => {
+                    // Ordena eventos
                     inst.futureEvents.sort((a,b) => new Date(a.date) - new Date(b.date));
                     
-                    let finalTotal = 0;
-                    Object.keys(inst.detalheCursos).forEach(c => {
+                    // Cálculo do Running Total
+                    let runningCount = inst.totalTurmas; // Começa com o total ATUAL (Baseado no cenário)
+
+                    inst.futureEvents.forEach(evt => {
+                        if (evt.type === 'entry') runningCount++;
+                        else runningCount--; // Exit or End
+                        
+                        // Guarda o saldo no próprio evento para exibir no card
+                        if(runningCount < 0) runningCount = 0; // Proteção
+                        evt.runningTotal = runningCount;
+                    });
+                    
+                    // Final Total também pode ser calculado somando os detalhes, mas o runningCount é mais direto para o "timeline"
+                    // Vamos garantir que o Total Futuro bata com o último Running Total
+                    inst.futureTotal = runningCount;
+
+                    // Recalcula detalheCursos.final para consistência
+                     Object.keys(inst.detalheCursos).forEach(c => {
                         const d = inst.detalheCursos[c];
                         d.final = d.atual + d.entradas - d.saidas;
                         if(d.final < 0) d.final = 0;
-                        finalTotal += d.final;
                     });
-                    inst.futureTotal = finalTotal;
                 });
 
                 return Object.values(stats).sort((a,b) => b.totalAlunos - a.totalAlunos);
@@ -923,10 +936,13 @@
                                                                     {evt.type === 'entry' ? '+' : evt.type === 'exit' ? '➔' : '■'}
                                                                 </div>
                                                                 
-                                                                <div className="bg-gray-50 border border-gray-200 rounded p-3 flex-1 text-sm shadow-sm">
+                                                                <div className="bg-gray-50 border border-gray-200 rounded p-3 flex-1 text-sm shadow-sm relative">
+                                                                    <div className="absolute right-2 top-2 bg-gray-100 px-2 py-1 rounded text-xs font-bold text-gray-600">
+                                                                        Saldo: {evt.runningTotal}
+                                                                    </div>
                                                                     <div className="flex justify-between font-bold text-gray-700 mb-1">
                                                                         <span>{formatDatePTBR(evt.date)}</span>
-                                                                        <span className={`text-[10px] uppercase px-1 rounded border 
+                                                                        <span className={`text-[10px] uppercase px-1 rounded border mr-16 
                                                                             ${evt.type === 'entry' ? 'bg-green-100 text-green-700 border-green-200' : 
                                                                               evt.type === 'exit' ? 'bg-orange-100 text-orange-700 border-orange-200' : 
                                                                               'bg-red-100 text-red-700 border-red-200'}`}>
