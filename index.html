@@ -8,19 +8,15 @@
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- VERSÕES MAIS ESTÁVEIS (CDNJS) -->
-    <!-- 1. React e ReactDOM -->
+    <!-- VERSÕES ESTÁVEIS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin></script>
-    
-    <!-- 2. Prop-types (Necessário para o Recharts) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
-    
-    <!-- 3. Recharts (Gráficos) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
-    
-    <!-- 4. Babel -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    
+    <!-- SheetJS (Para ler Excel .xlsx, .xlsm, .xls) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; }
@@ -32,10 +28,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        // Garante que as bibliotecas carregaram
         const { useState, useEffect, useMemo, useRef } = React;
-        
-        // Tenta pegar o Recharts de forma segura
         const RechartsObj = window.Recharts || null;
         
         // Ícones SVG
@@ -49,13 +42,15 @@
             ArrowRightLeft: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></svg>,
             BarChart3: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>,
             AlertCircle: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>,
-            Info: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            Info: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>,
+            CheckSquare: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         };
 
         const MOCK_DATA = [
             { id: '202500029', curso: 'Administrativo', analista: 'Bianca', alunos: 31, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Sheila', instrutor2: 'Bruna', dataTransferencia: '2026-02-04' },
             { id: '202500118', curso: 'Administrativo', analista: 'Bianca', alunos: 31, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Bruna', instrutor2: 'Jaqueline', dataTransferencia: '2026-02-04' },
-            { id: '202501228', curso: 'Supermercado', analista: 'Bianca', alunos: 28, inicio: '2025-12-02', termino: '2026-12-01', instrutor1: 'Luciano', instrutor2: 'Claire', dataTransferencia: '2026-02-04' }
+            { id: '202501228', curso: 'Supermercado', analista: 'Bianca', alunos: 28, inicio: '2025-12-02', termino: '2026-12-01', instrutor1: 'Luciano', instrutor2: 'Claire', dataTransferencia: '2026-02-04' },
+            { id: '202400999', curso: 'Vendas', analista: 'Mariana', alunos: 25, inicio: '2024-01-01', termino: '2024-12-01', instrutor1: 'Sheila', instrutor2: '', dataTransferencia: '' } 
         ];
 
         function App() {
@@ -70,92 +65,121 @@
             const [chartsLoaded, setChartsLoaded] = useState(!!RechartsObj);
 
             useEffect(() => {
-                // Tenta detectar se o Recharts carregou atrasado
                 if (!chartsLoaded && window.Recharts) {
                     setChartsLoaded(true);
                 }
             }, [chartsLoaded]);
 
-            // --- LÓGICA DE UPLOAD ---
+            // --- LÓGICA DE UPLOAD REFINADA (EXCEL + CSV) ---
             const handleFileUpload = (event) => {
                 const file = event.target.files[0];
                 if (!file) return;
 
                 const reader = new FileReader();
-                
+
                 reader.onload = (e) => {
                     try {
-                        const text = e.target.result;
-                        const lines = text.split(/\r\n|\n/);
+                        const data = new Uint8Array(e.target.result);
+                        // Lê o arquivo usando SheetJS (suporta xlsx, xlsm, xls, csv, txt)
+                        const workbook = XLSX.read(data, {type: 'array', cellDates: true});
+                        
+                        // Pega a primeira aba da planilha
+                        const firstSheetName = workbook.SheetNames[0];
+                        const worksheet = workbook.Sheets[firstSheetName];
+                        
+                        // Converte para JSON (Array de Arrays)
+                        const jsonData = XLSX.utils.sheet_to_json(worksheet, {header: 1});
+
+                        // Remove cabeçalho (primeira linha) e processa
                         const cleanData = [];
                         
-                        for (let i = 1; i < lines.length; i++) {
-                            const line = lines[i].trim();
-                            if (!line) continue;
-
-                            // Tratamento para CSVs complexos (aspas) pode ser necessário,
-                            // mas assumindo CSV simples separado por vírgula conforme exemplo:
-                            const cols = line.split(',');
+                        // Começa do índice 1 para pular o cabeçalho
+                        for (let i = 1; i < jsonData.length; i++) {
+                            const cols = jsonData[i];
                             
-                            // Verifica se há dados suficientes (mínimo Coluna A)
-                            if (cols.length > 0 && cols[0].trim() !== '') {
+                            // Verifica se a linha não está vazia (pelo menos coluna A existe)
+                            if (cols && cols.length > 0 && cols[0]) {
                                 
-                                // Tratamento Data Transferência (Coluna I = Index 8)
-                                let rawDate = cols[8] ? cols[8].trim() : '';
-                                
-                                // Validação: Se for "OK" ou vazio, não é data. 
-                                // Se for data DD/MM/YYYY converte.
-                                let isValidDate = false;
-
-                                if (rawDate.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
-                                    const parts = rawDate.split('/');
-                                    rawDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
-                                    isValidDate = true;
-                                } else if (rawDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
-                                    isValidDate = true;
-                                }
+                                // Função auxiliar para normalizar datas vindas do Excel ou Texto
+                                const parseDate = (val) => {
+                                    if (!val) return '';
+                                    
+                                    // Se for objeto Date (Excel converteu automaticamente)
+                                    if (val instanceof Date) {
+                                        // Ajusta fuso horário simples para YYYY-MM-DD
+                                        return val.toISOString().split('T')[0];
+                                    }
+                                    
+                                    // Se for string
+                                    if (typeof val === 'string') {
+                                        val = val.trim();
+                                        if (val.length < 8) return ''; // Ignora "OK", "X"
+                                        
+                                        // DD/MM/YYYY
+                                        if (val.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
+                                            const parts = val.split('/');
+                                            return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+                                        }
+                                        // YYYY-MM-DD
+                                        else if (val.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                                            return val;
+                                        }
+                                    }
+                                    return '';
+                                };
 
                                 cleanData.push({
-                                    id: cols[0]?.trim(),
-                                    curso: cols[1]?.trim() || 'Desconhecido',
-                                    analista: cols[2]?.trim(),
-                                    alunos: parseInt(cols[3]?.trim()) || 0,
-                                    inicio: cols[4]?.trim(),
-                                    termino: cols[5]?.trim(),
-                                    instrutor1: cols[6]?.trim(),
-                                    instrutor2: cols[7]?.trim(),
-                                    dataTransferencia: isValidDate ? rawDate : ''
+                                    id: String(cols[0] || '').trim(), // Col A
+                                    curso: String(cols[1] || 'Desconhecido').trim(), // Col B
+                                    analista: String(cols[2] || '').trim(), // Col C
+                                    alunos: parseInt(cols[3] || 0), // Col D
+                                    inicio: parseDate(cols[4]), // Col E
+                                    termino: parseDate(cols[5]), // Col F
+                                    instrutor1: String(cols[6] || '').trim(), // Col G
+                                    instrutor2: String(cols[7] || '').trim(), // Col H
+                                    dataTransferencia: parseDate(cols[8]) // Col I
                                 });
                             }
                         }
 
-                        if (cleanData.length === 0) {
-                            throw new Error("Nenhum dado válido encontrado.");
-                        }
+                        if (cleanData.length === 0) throw new Error("Nenhum dado válido encontrado.");
 
                         setData(cleanData);
                         setIsMockData(false);
                         setUploadError(null);
                         setActiveTab('list'); 
                     } catch (err) {
-                        console.error("Erro CSV:", err);
-                        setUploadError("Erro ao ler o arquivo. Verifique a formatação.");
+                        console.error("Erro Processamento:", err);
+                        setUploadError("Erro ao ler o arquivo. Verifique se é um arquivo Excel ou CSV válido.");
                     }
                 };
 
-                reader.readAsText(file);
+                // Usa readAsArrayBuffer para suportar binários do Excel
+                reader.readAsArrayBuffer(file);
                 event.target.value = null; 
             };
 
-            // --- PROCESSAMENTO ---
+            // --- PROCESSAMENTO INTELIGENTE ---
             const processedData = useMemo(() => {
                 const today = new Date();
+                today.setHours(0,0,0,0);
                 
                 return data.map(row => {
                     let currentInstructor = row.instrutor1;
-                    let status = 'Inicial';
+                    let status = 'Em Andamento';
+                    let isFinished = false;
 
-                    if (row.instrutor2 && row.dataTransferencia) {
+                    // 1. Verifica se já acabou (Término < Hoje)
+                    if (row.termino) {
+                        const terminoDate = new Date(row.termino + 'T00:00:00');
+                        if (!isNaN(terminoDate.getTime()) && today > terminoDate) {
+                            status = 'Concluída';
+                            isFinished = true;
+                        }
+                    }
+
+                    // 2. Verifica Transferência (apenas se não estiver concluída)
+                    if (!isFinished && row.instrutor2 && row.dataTransferencia) {
                         const transferDate = new Date(row.dataTransferencia + 'T00:00:00'); 
                         if (!isNaN(transferDate.getTime())) {
                             if (today >= transferDate) {
@@ -172,16 +196,19 @@
                     return {
                         ...row,
                         instrutorAtual: currentInstructor,
-                        statusTransferencia: status
+                        statusTransferencia: status,
+                        isFinished: isFinished
                     };
                 });
             }, [data]);
 
+            // --- ESTATÍSTICAS (FILTRANDO CONCLUÍDAS) ---
             const instructorStats = useMemo(() => {
                 const stats = {};
                 processedData.forEach(row => {
+                    if (row.isFinished || row.instrutorAtual === 'Não Atribuído') return;
+
                     const instrutor = row.instrutorAtual;
-                    if (instrutor === 'Não Atribuído') return;
 
                     if (!stats[instrutor]) {
                         stats[instrutor] = { nome: instrutor, totalAlunos: 0, totalTurmas: 0, cursos: {} };
@@ -220,25 +247,15 @@
                 </div>
             );
 
-            // Componente seguro para gráficos
+            // Gráficos Seguros
             const ChartsSection = () => {
-                if (!window.Recharts) {
-                    return (
-                        <div className="bg-yellow-50 border border-yellow-200 p-8 rounded-xl text-center text-yellow-800">
-                            <Icons.Info />
-                            <h3 className="text-lg font-bold mt-2">Visualização Gráfica Indisponível</h3>
-                            <p>Não foi possível carregar a biblioteca de gráficos. Verifique sua conexão.</p>
-                            <p className="text-sm mt-2">Você ainda pode usar a <strong>Lista</strong> e o <strong>Simulador</strong> normalmente.</p>
-                        </div>
-                    );
-                }
-
+                if (!window.Recharts) return <div className="p-4 bg-yellow-50 text-yellow-800 rounded">Carregando gráficos...</div>;
                 const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } = window.Recharts;
 
                 return (
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-96">
-                            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Icons.BarChart3 /> Carga de Alunos</h3>
+                            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Icons.BarChart3 /> Carga Ativa (Alunos)</h3>
                             <ResponsiveContainer width="100%" height="90%">
                                 <BarChart data={instructorStats} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
                                     <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
@@ -254,7 +271,7 @@
                             </ResponsiveContainer>
                         </div>
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-96">
-                            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Icons.BarChart3 /> Total de Turmas</h3>
+                            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Icons.BarChart3 /> Turmas Ativas</h3>
                             <ResponsiveContainer width="100%" height="90%">
                                 <BarChart data={instructorStats} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -271,9 +288,14 @@
 
             return (
                 <div className="min-h-screen pb-10">
-                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".csv,.txt" className="hidden" />
+                    <input 
+                        type="file" 
+                        ref={fileInputRef} 
+                        onChange={handleFileUpload} 
+                        accept=".csv,.txt,.xlsx,.xls,.xlsm" 
+                        className="hidden" 
+                    />
 
-                    {/* HEADER */}
                     <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-20">
                         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
                             <div className="flex items-center gap-2">
@@ -287,7 +309,7 @@
                                 <button onClick={() => setActiveTab('list')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'list' ? 'bg-gray-100 text-gray-700 border border-gray-200' : 'text-gray-500 hover:text-gray-700'}`}>Lista</button>
                                 <div className="h-6 w-px bg-gray-300 mx-2"></div>
                                 <button onClick={() => fileInputRef.current.click()} className="px-3 py-2 rounded-md text-sm font-medium bg-green-600 text-white hover:bg-green-700 shadow-sm transition-colors flex items-center gap-2">
-                                    <Icons.Upload /> <span className="hidden sm:inline">Importar</span>
+                                    <Icons.Upload /> <span className="hidden sm:inline">Importar Excel/CSV</span>
                                 </button>
                             </nav>
                         </div>
@@ -297,7 +319,7 @@
                         {isMockData && (
                             <div className="mb-6 bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg flex items-center gap-2 text-sm">
                                 <Icons.AlertCircle />
-                                <span><strong>Modo Demonstração:</strong> Exibindo dados de exemplo. Clique em "Importar" para carregar suas 77 turmas.</span>
+                                <span><strong>Modo Demonstração:</strong> Exibindo dados de exemplo. Clique em "Importar" para carregar sua planilha (xlsx, xlsm, csv).</span>
                             </div>
                         )}
                         {uploadError && (
@@ -307,19 +329,18 @@
                             </div>
                         )}
 
-                        {/* DASHBOARD */}
                         {activeTab === 'dashboard' && (
                             <div className="space-y-6 fade-in">
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                    <StatCard title="Total de Alunos" value={processedData.reduce((acc, curr) => acc + (curr.alunos || 0), 0)} icon={Icons.Users} color="bg-blue-600" />
-                                    <StatCard title="Turmas Ativas" value={processedData.length} icon={Icons.BookOpen} color="bg-orange-500" />
-                                    <StatCard title="Instrutores" value={instructorStats.length} icon={Icons.School} color="bg-cyan-500" />
+                                    <StatCard title="Total Alunos Ativos" value={instructorStats.reduce((acc, i) => acc + i.totalAlunos, 0)} icon={Icons.Users} color="bg-blue-600" />
+                                    <StatCard title="Turmas Ativas" value={instructorStats.reduce((acc, i) => acc + i.totalTurmas, 0)} icon={Icons.BookOpen} color="bg-orange-500" />
+                                    <StatCard title="Turmas Concluídas" value={processedData.filter(d => d.isFinished).length} icon={Icons.CheckSquare} color="bg-gray-400" />
                                 </div>
 
                                 <ChartsSection />
 
                                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                                    <h3 className="text-lg font-bold text-gray-800 mb-6">Detalhamento: Mix de Cursos por Instrutor</h3>
+                                    <h3 className="text-lg font-bold text-gray-800 mb-6">Detalhamento: Mix de Cursos (Apenas Ativos)</h3>
                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                         {instructorStats.map((inst) => (
                                             <div key={inst.nome} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow bg-gray-50">
@@ -347,12 +368,11 @@
                             </div>
                         )}
 
-                        {/* SIMULADOR */}
                         {activeTab === 'simulator' && (
                             <div className="max-w-4xl mx-auto space-y-8 fade-in">
                                 <div className="bg-gradient-to-r from-blue-900 to-blue-800 text-white p-8 rounded-2xl shadow-lg">
                                     <h2 className="text-2xl font-bold mb-2">Simulador de Distribuição</h2>
-                                    <p className="text-blue-200 mb-6">O "Robô" analisa quem está com menos carga e menos turmas desse tipo.</p>
+                                    <p className="text-blue-200 mb-6">Analisa a carga ATUAL de turmas ativas.</p>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                                         <div>
                                             <label className="block text-sm font-medium text-blue-100 mb-1">Nome do Curso</label>
@@ -379,7 +399,7 @@
                                             <div className="relative z-10">
                                                 <p className="text-sm text-green-600 font-bold uppercase tracking-wider mb-1">Melhor Opção</p>
                                                 <h2 className="text-3xl font-bold text-gray-800 mb-2">{recommendation[0].nome}</h2>
-                                                <p className="text-gray-600 max-w-lg mb-4">Este instrutor tem a melhor combinação de disponibilidade.</p>
+                                                <p className="text-gray-600 max-w-lg mb-4">Menor carga combinada.</p>
                                                 <div className="flex flex-wrap gap-4 text-sm">
                                                     <div className="bg-gray-100 px-3 py-1 rounded">
                                                         <span className="block text-gray-500 text-xs">Alunos Atuais</span>
@@ -393,7 +413,6 @@
                                             </div>
                                         </div>
                                         <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                                            <div className="bg-gray-50 px-6 py-3 border-b border-gray-200"><h4 className="font-semibold text-gray-700">Outras Opções (Ranking)</h4></div>
                                             <div className="divide-y divide-gray-100">
                                                 {recommendation.slice(1).map((inst, idx) => (
                                                     <div key={inst.nome} className="px-6 py-4 flex items-center justify-between hover:bg-gray-50">
@@ -404,9 +423,6 @@
                                                                 <p className="text-xs text-gray-500">{inst.details.alunos} alunos • {inst.details.mesmoCurso} turmas deste curso</p>
                                                             </div>
                                                         </div>
-                                                        <span className={`text-xs px-2 py-1 rounded-full ${inst.details.mesmoCurso > 1 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-                                                            {inst.details.mesmoCurso > 1 ? 'Muitas turmas iguais' : 'Equilibrado'}
-                                                        </span>
                                                     </div>
                                                 ))}
                                             </div>
@@ -416,13 +432,12 @@
                             </div>
                         )}
 
-                        {/* LISTA */}
                         {activeTab === 'list' && (
                             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden fade-in">
                                 <div className="p-6 border-b border-gray-200 flex justify-between items-center">
                                     <h3 className="font-bold text-gray-800 text-lg">Base de Dados Completa</h3>
                                     <span className="text-sm bg-blue-100 text-blue-800 px-3 py-1 rounded-full font-bold">
-                                        {processedData.length} Turmas Carregadas
+                                        {processedData.length} Turmas
                                     </span>
                                 </div>
                                 <div className="overflow-x-auto">
@@ -431,36 +446,45 @@
                                             <tr>
                                                 <th className="px-6 py-3">ID Turma</th>
                                                 <th className="px-6 py-3">Curso</th>
-                                                <th className="px-6 py-3">Analista</th>
                                                 <th className="px-6 py-3 text-center">Alunos</th>
+                                                <th className="px-6 py-3">Término</th>
                                                 <th className="px-6 py-3">Instr. 1</th>
                                                 <th className="px-6 py-3">Instr. 2</th>
-                                                <th className="px-6 py-3">Transf.</th>
-                                                <th className="px-6 py-3">Resp. Atual</th>
+                                                <th className="px-6 py-3">Data Transf.</th>
+                                                <th className="px-6 py-3">Status / Resp.</th>
                                             </tr>
                                         </thead>
                                         <tbody>
                                             {processedData.map((row, idx) => (
-                                                <tr key={idx} className="bg-white border-b hover:bg-gray-50">
-                                                    <td className="px-6 py-4 font-medium text-gray-900">{row.id}</td>
+                                                <tr key={idx} className={`border-b ${row.isFinished ? 'bg-gray-100 text-gray-400' : 'bg-white hover:bg-gray-50'}`}>
+                                                    <td className="px-6 py-4 font-medium">{row.id}</td>
                                                     <td className="px-6 py-4">
                                                         <span className={`px-2 py-1 rounded-full text-xs font-semibold
-                                                            ${row.curso.includes('Administrativo') ? 'bg-blue-100 text-blue-800' : 
+                                                            ${row.isFinished ? 'bg-gray-200 text-gray-500' :
+                                                            row.curso.includes('Administrativo') ? 'bg-blue-100 text-blue-800' : 
                                                             row.curso.includes('Vendas') ? 'bg-green-100 text-green-800' : 
                                                             'bg-orange-100 text-orange-800'}`}>
                                                             {row.curso}
                                                         </span>
                                                     </td>
-                                                    <td className="px-6 py-4">{row.analista}</td>
                                                     <td className="px-6 py-4 text-center font-bold">{row.alunos}</td>
-                                                    <td className="px-6 py-4 text-gray-400">{row.instrutor1}</td>
-                                                    <td className="px-6 py-4 text-gray-400">{row.instrutor2 || '-'}</td>
+                                                    <td className="px-6 py-4 text-xs font-mono">{row.termino}</td>
+                                                    <td className="px-6 py-4">{row.instrutor1}</td>
+                                                    <td className="px-6 py-4">{row.instrutor2 || '-'}</td>
                                                     <td className="px-6 py-4 text-xs font-mono">{row.dataTransferencia || '-'}</td>
                                                     <td className="px-6 py-4">
                                                         <div className="flex items-center gap-2">
-                                                            <span className="font-bold text-blue-900">{row.instrutorAtual}</span>
-                                                            {row.statusTransferencia === 'Transferido' && (
-                                                                <Icons.ArrowRightLeft className="text-orange-500 w-4 h-4" />
+                                                            {row.isFinished ? (
+                                                                <span className="flex items-center gap-1 font-bold text-gray-500">
+                                                                    <Icons.CheckSquare /> Concluída
+                                                                </span>
+                                                            ) : (
+                                                                <>
+                                                                    <span className="font-bold text-blue-900">{row.instrutorAtual}</span>
+                                                                    {row.statusTransferencia === 'Transferido' && (
+                                                                        <Icons.ArrowRightLeft className="text-orange-500 w-4 h-4" title="Transferida" />
+                                                                    )}
+                                                                </>
                                                             )}
                                                         </div>
                                                     </td>
