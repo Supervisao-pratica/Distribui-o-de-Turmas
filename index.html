@@ -195,16 +195,18 @@
                     try {
                         if (row.termino) {
                             const terminoDate = new Date(row.termino + 'T00:00:00');
+                            // AJUSTE: Se data alvo > data término, finalizou.
                             if (!isNaN(terminoDate.getTime()) && targetDate > terminoDate) {
                                 status = 'Finalizado'; 
                                 isFinished = true;
                             }
                         }
-                        // LÓGICA DE TRANSFERÊNCIA BASEADA NO CENÁRIO
+                        // LÓGICA DE TRANSFERÊNCIA BASEADA NO CENÁRIO (CORRIGIDA COM >=)
                         if (!isFinished && row.instrutor2 && row.dataTransferencia) {
                             const transferDate = new Date(row.dataTransferencia + 'T00:00:00'); 
                             if (!isNaN(transferDate.getTime())) {
-                                if (targetDate > transferDate) {
+                                // CORREÇÃO AQUI: Se a data alvo for IGUAL ou MAIOR que a transferência, já trocou.
+                                if (targetDate >= transferDate) {
                                     currentInstructor = row.instrutor2;
                                     status = 'Transferido';
                                 }
@@ -244,29 +246,30 @@
                         myClasses: [],       
                         receivedClasses: [], 
                         futureEvents: [],
-                        // NOVOS CAMPOS PARA FUTURO
                         futureTotal: 0,
-                        futureCursos: {}     // Contagem futura por curso
+                        // CONTADORES DETALHADOS PARA TABELA
+                        detalheCursos: {} // { 'Adm': { atual: 0, entradas: 0, saidas: 0, final: 0 } }
                     };
                 });
 
-                // Passo 2: Popula ESTADO ATUAL
+                // Passo 2: Popula ESTADO ATUAL (BASEADO NO VIEW DATE)
                 processedData.forEach(row => {
                     if (row.isFinished || row.instrutorAtual === 'Não Atribuído') return;
                     
                     const inst = row.instrutorAtual;
-                    
-                    if (!stats[inst]) { // Safety check
-                        stats[inst] = { nome: inst, totalAlunos: 0, totalTurmas: 0, analistas: new Set(), cursos: {}, myClasses: [], receivedClasses: [], futureEvents: [], futureTotal: 0, futureCursos: {} };
-                    }
+                    if (!stats[inst]) stats[inst] = { nome: inst, totalAlunos: 0, totalTurmas: 0, analistas: new Set(), cursos: {}, myClasses: [], receivedClasses: [], futureEvents: [], detalheCursos: {} };
                     
                     const qtdAlunos = parseInt(row.alunos);
                     stats[inst].totalAlunos += isNaN(qtdAlunos) ? 0 : qtdAlunos;
                     stats[inst].totalTurmas += 1;
-                    
                     if (row.analista) stats[inst].analistas.add(row.analista);
+                    
                     const curso = row.curso || 'Outros';
                     stats[inst].cursos[curso] = (stats[inst].cursos[curso] || 0) + 1;
+
+                    // Inicializa detalhe se não existir
+                    if (!stats[inst].detalheCursos[curso]) stats[inst].detalheCursos[curso] = { atual: 0, entradas: 0, saidas: 0 };
+                    stats[inst].detalheCursos[curso].atual++;
 
                     if (row.status === 'Transferido' && row.instrutor2 === inst && row.instrutor1 && row.instrutor1 !== inst) {
                         stats[inst].receivedClasses.push(row);
@@ -285,12 +288,24 @@
                              if(processed) stats[row.instrutor1].myClasses.push(processed);
                     }
 
-                    // GERA EVENTOS
+                    const curso = row.curso || 'Outros';
+
+                    // GERA EVENTOS (APÓS A DATA DO CENÁRIO)
                     if (row.dataTransferencia && row.instrutor2) {
                         const transferDate = new Date(row.dataTransferencia + 'T00:00:00');
-                        if (transferDate > targetDate) {
-                            if (stats[row.instrutor1]) stats[row.instrutor1].futureEvents.push({ type: 'exit', date: row.dataTransferencia, turma: row, detail: `Passa para ${row.instrutor2}` });
-                            if (stats[row.instrutor2]) stats[row.instrutor2].futureEvents.push({ type: 'entry', date: row.dataTransferencia, turma: row, detail: `Recebe de ${row.instrutor1}` });
+                        if (transferDate > targetDate) { // Evento futuro
+                            // SAÍDA DO I1
+                            if (stats[row.instrutor1]) {
+                                stats[row.instrutor1].futureEvents.push({ type: 'exit', date: row.dataTransferencia, turma: row, detail: `Passa para ${row.instrutor2}` });
+                                if(!stats[row.instrutor1].detalheCursos[curso]) stats[row.instrutor1].detalheCursos[curso] = { atual: 0, entradas: 0, saidas: 0 };
+                                stats[row.instrutor1].detalheCursos[curso].saidas++;
+                            }
+                            // ENTRADA NO I2
+                            if (stats[row.instrutor2]) {
+                                stats[row.instrutor2].futureEvents.push({ type: 'entry', date: row.dataTransferencia, turma: row, detail: `Recebe de ${row.instrutor1}` });
+                                if(!stats[row.instrutor2].detalheCursos[curso]) stats[row.instrutor2].detalheCursos[curso] = { atual: 0, entradas: 0, saidas: 0 };
+                                stats[row.instrutor2].detalheCursos[curso].entradas++;
+                            }
                         }
                     }
                     
@@ -300,42 +315,30 @@
                             let responsavelNoFim = row.instrutor1;
                             if (row.dataTransferencia && row.instrutor2) {
                                 const transferDate = new Date(row.dataTransferencia + 'T00:00:00');
-                                if (transferDate < terminoDate) responsavelNoFim = row.instrutor2;
+                                if (transferDate <= terminoDate) responsavelNoFim = row.instrutor2;
                             }
-                            if (stats[responsavelNoFim]) stats[responsavelNoFim].futureEvents.push({ type: 'end', date: row.termino, turma: row, detail: 'Turma Finaliza' });
+                            
+                            if (stats[responsavelNoFim]) {
+                                stats[responsavelNoFim].futureEvents.push({ type: 'end', date: row.termino, turma: row, detail: 'Turma Finaliza' });
+                                if(!stats[responsavelNoFim].detalheCursos[curso]) stats[responsavelNoFim].detalheCursos[curso] = { atual: 0, entradas: 0, saidas: 0 };
+                                stats[responsavelNoFim].detalheCursos[curso].saidas++; // Conta fim como saída
+                            }
                         }
                     }
                 });
 
-                // Passo 4: PROCESSA O FUTURO (Aplica eventos sobre o estado atual)
+                // Passo 4: TOTALIZADORES
                 Object.values(stats).forEach(inst => {
-                    // Ordena eventos
                     inst.futureEvents.sort((a,b) => new Date(a.date) - new Date(b.date));
-
-                    // Inicia com o estado atual
-                    let fCount = inst.totalTurmas;
-                    let fCourses = { ...inst.cursos };
-
-                    // Aplica mudanças
-                    inst.futureEvents.forEach(evt => {
-                        const c = evt.turma.curso || 'Outros';
-                        if (typeof fCourses[c] === 'undefined') fCourses[c] = 0;
-
-                        if (evt.type === 'entry') {
-                            fCount++;
-                            fCourses[c]++;
-                        } else if (evt.type === 'exit' || evt.type === 'end') {
-                            fCount--;
-                            fCourses[c]--;
-                        }
+                    
+                    let finalTotal = 0;
+                    Object.keys(inst.detalheCursos).forEach(c => {
+                        const d = inst.detalheCursos[c];
+                        d.final = d.atual + d.entradas - d.saidas;
+                        if(d.final < 0) d.final = 0;
+                        finalTotal += d.final;
                     });
-
-                    // Limpa negativos e zeros
-                    if(fCount < 0) fCount = 0;
-                    Object.keys(fCourses).forEach(k => { if(fCourses[k] < 0) fCourses[k] = 0; });
-
-                    inst.futureTotal = fCount;
-                    inst.futureCursos = fCourses;
+                    inst.futureTotal = finalTotal;
                 });
 
                 return Object.values(stats).sort((a,b) => b.totalAlunos - a.totalAlunos);
@@ -406,10 +409,8 @@
                 setNewClass({ ...newClass, curso: selectedCurso });
 
                 if (selectedCurso) {
-                    // Sugestões para I1: Baseado em quem tem MENOS carga agora e tem afinidade com o curso
                     const recsI1 = getRecommendationsFor(selectedCurso, '').slice(0, 3);
                     const recsI2 = getRecommendationsFor(selectedCurso, '').slice(0, 4); 
-
                     setModalSuggestions({ i1: recsI1, i2: recsI2 });
                 } else {
                     setModalSuggestions({ i1: [], i2: [] });
@@ -804,41 +805,39 @@
                                         
                                         {/* COLUNA 1: TABELA COMPARATIVA & TURMAS ATIVAS */}
                                         <div className="lg:col-span-2 space-y-6">
-                                            {/* TABELA COMPARATIVA DE CURSOS */}
+                                            {/* TABELA COMPARATIVA DE CURSOS EXPANDIDA */}
                                             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                                                 <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 font-bold text-gray-700 text-sm flex items-center gap-2">
-                                                    <Icons.Trend /> Comparativo por Curso
+                                                    <Icons.Trend /> Movimentação por Curso
                                                 </div>
                                                 <table className="min-w-full comp-table">
                                                     <thead>
                                                         <tr>
                                                             <th>Curso</th>
-                                                            <th className="text-center">Atual</th>
-                                                            <th className="text-center">Futuro</th>
-                                                            <th className="text-right">Variação</th>
+                                                            <th className="text-center bg-blue-50">Atual</th>
+                                                            <th className="text-center text-green-700 bg-green-50">+ Entradas</th>
+                                                            <th className="text-center text-red-700 bg-red-50">- Saídas/Fim</th>
+                                                            <th className="text-center bg-indigo-50 text-indigo-800">Final</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody>
-                                                        {Object.keys({ ...selectedInstructorDetail.cursos, ...selectedInstructorDetail.futureCursos }).sort().map(curso => {
-                                                            const curr = selectedInstructorDetail.cursos[curso] || 0;
-                                                            const fut = selectedInstructorDetail.futureCursos[curso] || 0;
-                                                            const diff = fut - curr;
-                                                            if (curr === 0 && fut === 0) return null;
+                                                        {Object.keys(selectedInstructorDetail.detalheCursos).sort().map(curso => {
+                                                            const d = selectedInstructorDetail.detalheCursos[curso];
+                                                            // Se tudo for zero, ignora (opcional)
+                                                            if (d.atual === 0 && d.entradas === 0 && d.saidas === 0 && d.final === 0) return null;
                                                             return (
                                                                 <tr key={curso}>
                                                                     <td className="font-medium text-gray-700">{curso}</td>
-                                                                    <td className="text-center font-bold text-blue-600">{curr}</td>
-                                                                    <td className="text-center font-bold text-indigo-600">{fut}</td>
-                                                                    <td className="text-right">
-                                                                        {diff !== 0 ? (
-                                                                            <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${diff > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                                                                {diff > 0 ? '+' : ''}{diff}
-                                                                            </span>
-                                                                        ) : <span className="text-gray-400">-</span>}
-                                                                    </td>
+                                                                    <td className="text-center font-bold text-blue-800 bg-blue-50/50">{d.atual}</td>
+                                                                    <td className="text-center font-bold text-green-600 bg-green-50/50">{d.entradas > 0 ? `+${d.entradas}` : '-'}</td>
+                                                                    <td className="text-center font-bold text-red-500 bg-red-50/50">{d.saidas > 0 ? `-${d.saidas}` : '-'}</td>
+                                                                    <td className="text-center font-bold text-indigo-700 bg-indigo-50/50">{d.final}</td>
                                                                 </tr>
                                                             );
                                                         })}
+                                                        {Object.keys(selectedInstructorDetail.detalheCursos).length === 0 && (
+                                                            <tr><td colSpan="5" className="text-center text-gray-400 italic">Sem registros de movimentação para este instrutor.</td></tr>
+                                                        )}
                                                     </tbody>
                                                 </table>
                                             </div>
