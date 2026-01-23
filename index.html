@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard Senac Portão - Distribuição de Turmas</title>
+    <title>Dashboard Senac Portão - Gestão Completa</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -14,14 +14,16 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
-    
-    <!-- SheetJS (Para ler Excel .xlsx, .xlsm, .xls) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; }
-        .fade-in { animation: fadeIn 0.5s ease-in-out; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; }
+        .fade-in { animation: fadeIn 0.4s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
     </style>
 </head>
 <body>
@@ -29,147 +31,74 @@
 
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
-        const RechartsObj = window.Recharts || null;
         
-        // Ícones SVG
+        // Ícones
         const Icons = {
-            Users: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
-            BookOpen: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>,
-            School: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m4 6 8-4 8 4"/><path d="m18 10 4 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8l4-2"/><path d="M14 22v-4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v4"/><path d="M18 5v17"/><path d="M6 5v17"/></svg>,
-            Upload: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
-            Search: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>,
-            CheckCircle: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
-            ArrowRightLeft: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></svg>,
-            BarChart3: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>,
-            AlertCircle: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>,
-            Info: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>,
-            CheckSquare: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            Users: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>,
+            BookOpen: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>,
+            Upload: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>,
+            Download: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>,
+            Alert: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>,
+            Plus: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>,
+            Filter: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>,
+            Switch: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>,
+            Calendar: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>,
+            Search: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>,
+            Check: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
         };
 
         const MOCK_DATA = [
             { id: '202500029', curso: 'Administrativo', analista: 'Bianca', alunos: 31, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Sheila', instrutor2: 'Bruna', dataTransferencia: '2026-02-04' },
             { id: '202500118', curso: 'Administrativo', analista: 'Bianca', alunos: 31, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Bruna', instrutor2: 'Jaqueline', dataTransferencia: '2026-02-04' },
-            { id: '202501228', curso: 'Supermercado', analista: 'Bianca', alunos: 28, inicio: '2025-12-02', termino: '2026-12-01', instrutor1: 'Luciano', instrutor2: 'Claire', dataTransferencia: '2026-02-04' },
-            { id: '202400999', curso: 'Vendas', analista: 'Mariana', alunos: 25, inicio: '2024-01-01', termino: '2024-12-01', instrutor1: 'Sheila', instrutor2: '', dataTransferencia: '' } 
+            { id: '202501228', curso: 'Supermercado', analista: 'Bianca', alunos: 28, inicio: '2025-12-02', termino: '2026-12-01', instrutor1: 'Luciano', instrutor2: 'Claire', dataTransferencia: '2026-02-04' }
+        ];
+
+        const COURSE_OPTIONS = [
+            'Administrativo',
+            'Administrativo - Aprendizagem Técnica',
+            'Vendas',
+            'Supermercado',
+            'Logística',
+            'Informática',
+            'Outro'
         ];
 
         function App() {
+            // --- ESTADOS ---
             const [data, setData] = useState(MOCK_DATA);
-            const [activeTab, setActiveTab] = useState('dashboard');
-            const [newClassCourse, setNewClassCourse] = useState('Administrativo');
-            const [newClassStudents, setNewClassStudents] = useState(30);
-            const [recommendation, setRecommendation] = useState(null);
-            const [uploadError, setUploadError] = useState(null);
+            const [substitutions, setSubstitutions] = useState([]); 
+            const [filters, setFilters] = useState({ instrutor: '', analista: '' });
+            
+            // Modais e Tabs
+            const [isFormOpen, setIsFormOpen] = useState(false);
+            const [isSubModalOpen, setIsSubModalOpen] = useState(false);
+            const [activeTab, setActiveTab] = useState('dashboard'); // dashboard | simulator | subs
+
+            const [newClass, setNewClass] = useState({
+                id: '', curso: '', analista: '', alunos: '', inicio: '', termino: '', instrutor1: '', instrutor2: '', dataTransferencia: ''
+            });
+
+            const [newSub, setNewSub] = useState({
+                data: '', turmaId: '', instrutorAusente: '', instrutorSubstituto: '', motivo: ''
+            });
+
+            // Estado para o Simulador
+            const [simData, setSimData] = useState({ curso: 'Administrativo', alunos: 30 });
+            const [recommendations, setRecommendations] = useState(null);
+
             const fileInputRef = useRef(null);
-            const [isMockData, setIsMockData] = useState(true);
-            const [chartsLoaded, setChartsLoaded] = useState(!!RechartsObj);
 
-            useEffect(() => {
-                if (!chartsLoaded && window.Recharts) {
-                    setChartsLoaded(true);
-                }
-            }, [chartsLoaded]);
-
-            // --- LÓGICA DE UPLOAD REFINADA (EXCEL + CSV) ---
-            const handleFileUpload = (event) => {
-                const file = event.target.files[0];
-                if (!file) return;
-
-                const reader = new FileReader();
-
-                reader.onload = (e) => {
-                    try {
-                        const data = new Uint8Array(e.target.result);
-                        // Lê o arquivo usando SheetJS (suporta xlsx, xlsm, xls, csv, txt)
-                        const workbook = XLSX.read(data, {type: 'array', cellDates: true});
-                        
-                        // Pega a primeira aba da planilha
-                        const firstSheetName = workbook.SheetNames[0];
-                        const worksheet = workbook.Sheets[firstSheetName];
-                        
-                        // Converte para JSON (Array de Arrays)
-                        const jsonData = XLSX.utils.sheet_to_json(worksheet, {header: 1});
-
-                        // Remove cabeçalho (primeira linha) e processa
-                        const cleanData = [];
-                        
-                        // Começa do índice 1 para pular o cabeçalho
-                        for (let i = 1; i < jsonData.length; i++) {
-                            const cols = jsonData[i];
-                            
-                            // Verifica se a linha não está vazia (pelo menos coluna A existe)
-                            if (cols && cols.length > 0 && cols[0]) {
-                                
-                                // Função auxiliar para normalizar datas vindas do Excel ou Texto
-                                const parseDate = (val) => {
-                                    if (!val) return '';
-                                    
-                                    // Se for objeto Date (Excel converteu automaticamente)
-                                    if (val instanceof Date) {
-                                        // Ajusta fuso horário simples para YYYY-MM-DD
-                                        return val.toISOString().split('T')[0];
-                                    }
-                                    
-                                    // Se for string
-                                    if (typeof val === 'string') {
-                                        val = val.trim();
-                                        if (val.length < 8) return ''; // Ignora "OK", "X"
-                                        
-                                        // DD/MM/YYYY
-                                        if (val.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
-                                            const parts = val.split('/');
-                                            return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-                                        }
-                                        // YYYY-MM-DD
-                                        else if (val.match(/^\d{4}-\d{2}-\d{2}$/)) {
-                                            return val;
-                                        }
-                                    }
-                                    return '';
-                                };
-
-                                cleanData.push({
-                                    id: String(cols[0] || '').trim(), // Col A
-                                    curso: String(cols[1] || 'Desconhecido').trim(), // Col B
-                                    analista: String(cols[2] || '').trim(), // Col C
-                                    alunos: parseInt(cols[3] || 0), // Col D
-                                    inicio: parseDate(cols[4]), // Col E
-                                    termino: parseDate(cols[5]), // Col F
-                                    instrutor1: String(cols[6] || '').trim(), // Col G
-                                    instrutor2: String(cols[7] || '').trim(), // Col H
-                                    dataTransferencia: parseDate(cols[8]) // Col I
-                                });
-                            }
-                        }
-
-                        if (cleanData.length === 0) throw new Error("Nenhum dado válido encontrado.");
-
-                        setData(cleanData);
-                        setIsMockData(false);
-                        setUploadError(null);
-                        setActiveTab('list'); 
-                    } catch (err) {
-                        console.error("Erro Processamento:", err);
-                        setUploadError("Erro ao ler o arquivo. Verifique se é um arquivo Excel ou CSV válido.");
-                    }
-                };
-
-                // Usa readAsArrayBuffer para suportar binários do Excel
-                reader.readAsArrayBuffer(file);
-                event.target.value = null; 
-            };
-
-            // --- PROCESSAMENTO INTELIGENTE ---
+            // --- LÓGICA DE DADOS ---
             const processedData = useMemo(() => {
                 const today = new Date();
                 today.setHours(0,0,0,0);
-                
+
                 return data.map(row => {
                     let currentInstructor = row.instrutor1;
-                    let status = 'Em Andamento';
+                    let status = 'Ativo';
                     let isFinished = false;
 
-                    // 1. Verifica se já acabou (Término < Hoje)
+                    // Verifica Término
                     if (row.termino) {
                         const terminoDate = new Date(row.termino + 'T00:00:00');
                         if (!isNaN(terminoDate.getTime()) && today > terminoDate) {
@@ -178,7 +107,7 @@
                         }
                     }
 
-                    // 2. Verifica Transferência (apenas se não estiver concluída)
+                    // Verifica Transferência
                     if (!isFinished && row.instrutor2 && row.dataTransferencia) {
                         const transferDate = new Date(row.dataTransferencia + 'T00:00:00'); 
                         if (!isNaN(transferDate.getTime())) {
@@ -189,96 +118,267 @@
                         }
                     }
 
-                    if (!currentInstructor || currentInstructor.trim() === '') {
-                        currentInstructor = 'Não Atribuído';
-                    }
+                    if (!currentInstructor || currentInstructor.trim() === '') currentInstructor = 'Não Atribuído';
 
-                    return {
-                        ...row,
-                        instrutorAtual: currentInstructor,
-                        statusTransferencia: status,
-                        isFinished: isFinished
-                    };
+                    return { ...row, instrutorAtual: currentInstructor, status, isFinished };
                 });
             }, [data]);
 
-            // --- ESTATÍSTICAS (FILTRANDO CONCLUÍDAS) ---
+            // --- LÓGICA DE SUGESTÃO DE SUBSTITUIÇÃO ---
+            useEffect(() => {
+                if (newSub.turmaId && newSub.data) {
+                    const turma = processedData.find(t => t.id === newSub.turmaId);
+                    if (turma) {
+                        const subDate = new Date(newSub.data + 'T00:00:00');
+                        let titularNaData = turma.instrutor1;
+                        if (turma.instrutor2 && turma.dataTransferencia) {
+                            const transfDate = new Date(turma.dataTransferencia + 'T00:00:00');
+                            if (subDate >= transfDate) titularNaData = turma.instrutor2;
+                        }
+                        let sugestaoSubstituto = '';
+                        if (titularNaData === turma.instrutor1 && turma.instrutor2) sugestaoSubstituto = turma.instrutor2;
+                        else if (titularNaData === turma.instrutor2 && turma.instrutor1) sugestaoSubstituto = turma.instrutor1;
+
+                        setNewSub(prev => ({
+                            ...prev,
+                            instrutorAusente: titularNaData,
+                            instrutorSubstituto: prev.instrutorSubstituto || sugestaoSubstituto 
+                        }));
+                    }
+                }
+            }, [newSub.turmaId, newSub.data, processedData]);
+
+
+            const filteredData = useMemo(() => {
+                return processedData.filter(row => {
+                    const matchInstrutor = filters.instrutor === '' || row.instrutorAtual === filters.instrutor;
+                    const matchAnalista = filters.analista === '' || row.analista === filters.analista;
+                    return matchInstrutor && matchAnalista;
+                });
+            }, [processedData, filters]);
+
+            // Stats para os Gráficos e Alertas
             const instructorStats = useMemo(() => {
                 const stats = {};
+                // Considera apenas dados filtrados para a visualização, mas para o SIMULADOR é ideal usar TODOS os dados ativos
+                // Aqui vamos usar processedData (filtrando apenas concluídas) para garantir que o simulador veja a carga real de todos
                 processedData.forEach(row => {
                     if (row.isFinished || row.instrutorAtual === 'Não Atribuído') return;
-
-                    const instrutor = row.instrutorAtual;
-
-                    if (!stats[instrutor]) {
-                        stats[instrutor] = { nome: instrutor, totalAlunos: 0, totalTurmas: 0, cursos: {} };
-                    }
-                    stats[instrutor].totalAlunos += parseInt(row.alunos || 0);
-                    stats[instrutor].totalTurmas += 1;
-                    const cursoTipo = row.curso || 'Outros';
-                    stats[instrutor].cursos[cursoTipo] = (stats[instrutor].cursos[cursoTipo] || 0) + 1;
+                    const inst = row.instrutorAtual;
+                    if (!stats[inst]) stats[inst] = { nome: inst, totalAlunos: 0, totalTurmas: 0, analistas: new Set(), cursos: {} };
+                    stats[inst].totalAlunos += parseInt(row.alunos || 0);
+                    stats[inst].totalTurmas += 1;
+                    if (row.analista) stats[inst].analistas.add(row.analista);
+                    const curso = row.curso || 'Outros';
+                    stats[inst].cursos[curso] = (stats[inst].cursos[curso] || 0) + 1;
                 });
-                return Object.values(stats).sort((a,b) => b.totalAlunos - a.totalAlunos);
-            }, [processedData]);
 
-            // --- SIMULADOR ---
-            const handleSimulate = () => {
-                const scores = instructorStats.map(inst => {
-                    const loadScore = inst.totalAlunos * 1; 
-                    const classScore = inst.totalTurmas * 15; 
-                    const courseRepetitionScore = (inst.cursos[newClassCourse] || 0) * 50; 
+                const allStats = Object.values(stats);
+                const avgAlunos = allStats.reduce((acc, i) => acc + i.totalAlunos, 0) / (allStats.length || 1);
+                const avgTurmas = allStats.reduce((acc, i) => acc + i.totalTurmas, 0) / (allStats.length || 1);
+
+                return allStats.map(inst => {
+                    const overloadAlunos = inst.totalAlunos > avgAlunos * 1.3;
+                    const overloadTurmas = inst.totalTurmas > avgTurmas * 1.3;
                     return {
                         ...inst,
-                        score: loadScore + classScore + courseRepetitionScore,
-                        details: { alunos: inst.totalAlunos, turmas: inst.totalTurmas, mesmoCurso: inst.cursos[newClassCourse] || 0 }
+                        analistas: Array.from(inst.analistas).join(', '),
+                        alert: overloadAlunos || overloadTurmas,
+                        alertType: overloadAlunos && overloadTurmas ? 'Crítico' : (overloadAlunos ? 'Alunos' : (overloadTurmas ? 'Turmas' : null))
+                    };
+                }).sort((a,b) => b.totalAlunos - a.totalAlunos);
+            }, [processedData]); // Dependência em processedData para cálculo global
+
+            const uniqueInstrutores = [...new Set(processedData.flatMap(d => [d.instrutor1, d.instrutor2]))].filter(d => d && d !== 'Não Atribuído').sort();
+            const uniqueAnalistas = [...new Set(processedData.map(d => d.analista))].filter(Boolean).sort();
+
+            // --- LÓGICA DO SIMULADOR ---
+            const handleSimulate = () => {
+                if (!simData.curso || !simData.alunos) return;
+
+                const scores = instructorStats.map(inst => {
+                    // Pesos: Alunos = 1, Turmas = 15, Mesmo Curso = 50 (Evita especialização excessiva)
+                    const loadScore = inst.totalAlunos * 1; 
+                    const classScore = inst.totalTurmas * 15; 
+                    const courseRepetitionScore = (inst.cursos[simData.curso] || 0) * 50; 
+                    
+                    const finalScore = loadScore + classScore + courseRepetitionScore;
+
+                    return {
+                        ...inst,
+                        score: finalScore,
+                        projectedAlunos: inst.totalAlunos + parseInt(simData.alunos),
+                        projectedTurmas: inst.totalTurmas + 1,
+                        currentCourseCount: inst.cursos[simData.curso] || 0
                     };
                 });
-                scores.sort((a, b) => a.score - b.score);
-                setRecommendation(scores);
+
+                // Ordena do menor score (melhor) para o maior
+                setRecommendations(scores.sort((a, b) => a.score - b.score));
             };
 
-            const StatCard = ({ title, value, icon: IconComponent, color }) => (
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
-                    <div>
-                        <p className="text-gray-500 text-sm font-medium mb-1">{title}</p>
-                        <h3 className="text-3xl font-bold text-gray-800">{value}</h3>
-                    </div>
-                    <div className={`p-3 rounded-full text-white ${color}`}><IconComponent /></div>
-                </div>
-            );
+            const acceptSuggestion = (instrutorNome) => {
+                // Abre o formulário de cadastro já preenchido
+                setNewClass(prev => ({
+                    ...prev,
+                    curso: simData.curso,
+                    alunos: simData.alunos,
+                    instrutor1: instrutorNome
+                }));
+                setIsFormOpen(true);
+            };
 
-            // Gráficos Seguros
-            const ChartsSection = () => {
-                if (!window.Recharts) return <div className="p-4 bg-yellow-50 text-yellow-800 rounded">Carregando gráficos...</div>;
-                const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } = window.Recharts;
+            // --- AÇÕES ---
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    try {
+                        const bstr = evt.target.result;
+                        const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
+                        const wsName = wb.SheetNames[0];
+                        const ws = wb.Sheets[wsName];
+                        const jsonData = XLSX.utils.sheet_to_json(ws, { header: 1 });
+                        const newRows = [];
+                        for(let i=1; i<jsonData.length; i++) {
+                            const row = jsonData[i];
+                            if(row && (row[0] || row[1])) {
+                                const parseDate = (d) => {
+                                    if(d instanceof Date) return d.toISOString().split('T')[0];
+                                    if(typeof d === 'string') {
+                                        d = d.trim();
+                                        if(d.match(/^\d{2}\/\d{2}\/\d{4}$/)) { const [dd,mm,yyyy] = d.split('/'); return `${yyyy}-${mm}-${dd}`; }
+                                        if(d.match(/^\d{4}-\d{2}-\d{2}$/)) return d;
+                                    }
+                                    return '';
+                                }
+                                newRows.push({
+                                    id: row[0], curso: row[1], analista: row[2], alunos: row[3],
+                                    inicio: parseDate(row[4]), termino: parseDate(row[5]),
+                                    instrutor1: row[6], instrutor2: row[7], dataTransferencia: parseDate(row[8])
+                                });
+                            }
+                        }
+
+                        const subRows = [];
+                        if (wb.SheetNames.length > 1) {
+                            const wsSubName = wb.SheetNames[1];
+                            if (wsSubName.toLowerCase().includes('subst')) {
+                                const wsSub = wb.Sheets[wsSubName];
+                                const jsonSub = XLSX.utils.sheet_to_json(wsSub, { header: 1 });
+                                for(let i=1; i<jsonSub.length; i++) {
+                                    const row = jsonSub[i];
+                                    if(row && row[0]) {
+                                        const parseDate = (d) => { if(d instanceof Date) return d.toISOString().split('T')[0]; return d; };
+                                        subRows.push({
+                                            data: parseDate(row[0]),
+                                            turmaId: row[1],
+                                            instrutorAusente: row[2],
+                                            instrutorSubstituto: row[3],
+                                            motivo: row[4]
+                                        });
+                                    }
+                                }
+                            }
+                        }
+
+                        if (newRows.length > 0) {
+                            setData(newRows);
+                            setSubstitutions(subRows);
+                            alert(`${newRows.length} turmas e ${subRows.length} substituições importadas!`);
+                        } else {
+                            alert('Nenhum dado válido encontrado.');
+                        }
+                    } catch (err) { alert('Erro ao ler arquivo: ' + err.message); }
+                };
+                reader.readAsBinaryString(file);
+                e.target.value = null; 
+            };
+
+            const handleAddClass = (e) => {
+                e.preventDefault();
+                setData([...data, { ...newClass }]);
+                setIsFormOpen(false);
+                setNewClass({ id: '', curso: '', analista: '', alunos: '', inicio: '', termino: '', instrutor1: '', instrutor2: '', dataTransferencia: '' });
+                alert("Turma adicionada com sucesso!");
+            };
+
+            const handleAddSub = (e) => {
+                e.preventDefault();
+                setSubstitutions([...substitutions, { ...newSub }]);
+                setIsSubModalOpen(false);
+                setNewSub({ data: '', turmaId: '', instrutorAusente: '', instrutorSubstituto: '', motivo: '' });
+            };
+
+            const handleExport = () => {
+                const wb = XLSX.utils.book_new();
+                const headers = ['Turma', 'Curso', 'Analista', 'Alunos', 'Início', 'Término', 'Instrutor 1', 'Instrutor 2', 'Data Transferência', 'Resp. Atual', 'Status'];
+                const exportRows = data.map(row => {
+                    const today = new Date(); today.setHours(0,0,0,0);
+                    let currInst = row.instrutor1;
+                    let st = 'Ativo';
+                    if (row.termino) { const t = new Date(row.termino+'T00:00:00'); if (!isNaN(t) && today > t) st = 'Concluída'; }
+                    if (st !== 'Concluída' && row.instrutor2 && row.dataTransferencia) {
+                        const tf = new Date(row.dataTransferencia+'T00:00:00');
+                        if (!isNaN(tf) && today >= tf) currInst = row.instrutor2;
+                    }
+                    return [row.id, row.curso, row.analista, row.alunos, row.inicio, row.termino, row.instrutor1, row.instrutor2, row.dataTransferencia, currInst, st];
+                });
+                const wsData = [headers, ...exportRows];
+                const ws = XLSX.utils.aoa_to_sheet(wsData);
+                XLSX.utils.book_append_sheet(wb, ws, "Base de Turmas");
+
+                const subHeaders = ['Data', 'Turma ID', 'Instrutor Ausente', 'Instrutor Substituto', 'Motivo'];
+                const subExportRows = substitutions.map(s => [s.data, s.turmaId, s.instrutorAusente, s.instrutorSubstituto, s.motivo]);
+                const wsSubData = [subHeaders, ...subExportRows];
+                const wsSub = XLSX.utils.aoa_to_sheet(wsSubData);
+                XLSX.utils.book_append_sheet(wb, wsSub, "Substituicoes");
+
+                XLSX.writeFile(wb, "Senac_Gestao_Turmas.xlsx");
+            };
+
+            // --- COMPONENTES ---
+            const Charts = () => {
+                if (!window.Recharts) return null;
+                const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } = window.Recharts;
+                // Gráfico usa filteredData para obedecer filtros visuais
+                // Recalculando stats para filteredData para exibição do gráfico
+                const chartStats = useMemo(() => {
+                    const stats = {};
+                    filteredData.forEach(row => {
+                        if (row.isFinished || row.instrutorAtual === 'Não Atribuído') return;
+                        const inst = row.instrutorAtual;
+                        if (!stats[inst]) stats[inst] = { nome: inst, totalAlunos: 0, totalTurmas: 0 };
+                        stats[inst].totalAlunos += parseInt(row.alunos || 0);
+                        stats[inst].totalTurmas += 1;
+                    });
+                    return Object.values(stats).sort((a,b) => b.totalAlunos - a.totalAlunos);
+                }, [filteredData]);
 
                 return (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-96">
-                            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Icons.BarChart3 /> Carga Ativa (Alunos)</h3>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8 fade-in">
+                        <div className="bg-white p-4 rounded-lg shadow border border-gray-200 h-96">
+                            <h3 className="font-bold text-gray-700 mb-4 text-center">Total de Jovens por Instrutor (Filtrado)</h3>
                             <ResponsiveContainer width="100%" height="90%">
-                                <BarChart data={instructorStats} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
-                                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
-                                    <XAxis type="number" />
-                                    <YAxis dataKey="nome" type="category" width={80} tick={{fontSize: 11}} />
-                                    <Tooltip cursor={{fill: '#f4f6f8'}} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
-                                    <Bar dataKey="totalAlunos" fill="#004587" radius={[0, 4, 4, 0]} name="Alunos" barSize={20}>
-                                        {instructorStats.map((entry, index) => (
-                                            <Cell key={`cell-${index}`} fill={index % 2 === 0 ? '#004587' : '#F68B1F'} />
-                                        ))}
-                                    </Bar>
+                                <BarChart data={chartStats} layout="horizontal" margin={{top:20, right:30, left:20, bottom:50}}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                                    <XAxis dataKey="nome" angle={-45} textAnchor="end" interval={0} height={60} tick={{fontSize:10}} />
+                                    <YAxis />
+                                    <Tooltip contentStyle={{borderRadius:'8px'}} />
+                                    <Bar dataKey="totalAlunos" name="Alunos" fill="#004587" radius={[4, 4, 0, 0]} />
                                 </BarChart>
                             </ResponsiveContainer>
                         </div>
-                        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-96">
-                            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Icons.BarChart3 /> Turmas Ativas</h3>
+                        <div className="bg-white p-4 rounded-lg shadow border border-gray-200 h-96">
+                            <h3 className="font-bold text-gray-700 mb-4 text-center">Total de Turmas por Instrutor (Filtrado)</h3>
                             <ResponsiveContainer width="100%" height="90%">
-                                <BarChart data={instructorStats} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                                <BarChart data={chartStats} layout="horizontal" margin={{top:20, right:30, left:20, bottom:50}}>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                                    <XAxis dataKey="nome" tick={{fontSize: 11}} />
+                                    <XAxis dataKey="nome" angle={-45} textAnchor="end" interval={0} height={60} tick={{fontSize:10}} />
                                     <YAxis allowDecimals={false} />
-                                    <Tooltip cursor={{fill: '#f4f6f8'}} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
-                                    <Bar dataKey="totalTurmas" fill="#00A4E0" radius={[4, 4, 0, 0]} name="Turmas" barSize={30} />
+                                    <Tooltip contentStyle={{borderRadius:'8px'}} />
+                                    <Bar dataKey="totalTurmas" name="Turmas" fill="#F68B1F" radius={[4, 4, 0, 0]} />
                                 </BarChart>
                             </ResponsiveContainer>
                         </div>
@@ -287,215 +387,387 @@
             };
 
             return (
-                <div className="min-h-screen pb-10">
-                    <input 
-                        type="file" 
-                        ref={fileInputRef} 
-                        onChange={handleFileUpload} 
-                        accept=".csv,.txt,.xlsx,.xls,.xlsm" 
-                        className="hidden" 
-                    />
+                <div className="min-h-screen pb-20">
+                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".csv,.xlsx,.xls,.xlsm" className="hidden" />
 
-                    <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-20">
-                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                                <div className="bg-white p-2 rounded-lg border-l-4 border-orange-500">
-                                    <h1 className="text-xl md:text-2xl font-bold text-blue-900 tracking-tight">Senac <span className="text-orange-500">Portão</span></h1>
+                    <nav className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-sm">
+                        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
+                            <div className="flex items-center gap-3">
+                                <img src="https://upload.wikimedia.org/wikipedia/commons/8/86/Senac_logo.svg" alt="Senac Logo" className="h-10 w-auto" />
+                                <div className="border-l pl-3 border-gray-300">
+                                    <h1 className="text-xl font-bold text-blue-900 leading-tight">Unidade Portão</h1>
+                                    <p className="text-xs text-gray-500 uppercase tracking-wide">Gestão de Distribuição</p>
                                 </div>
                             </div>
-                            <nav className="flex items-center space-x-2 md:space-x-4">
-                                <button onClick={() => setActiveTab('dashboard')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'dashboard' ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'text-gray-500 hover:text-gray-700'}`}>Dashboard</button>
-                                <button onClick={() => setActiveTab('simulator')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'simulator' ? 'bg-orange-50 text-orange-700 border border-orange-200' : 'text-gray-500 hover:text-gray-700'}`}>Distribuir</button>
-                                <button onClick={() => setActiveTab('list')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'list' ? 'bg-gray-100 text-gray-700 border border-gray-200' : 'text-gray-500 hover:text-gray-700'}`}>Lista</button>
-                                <div className="h-6 w-px bg-gray-300 mx-2"></div>
-                                <button onClick={() => fileInputRef.current.click()} className="px-3 py-2 rounded-md text-sm font-medium bg-green-600 text-white hover:bg-green-700 shadow-sm transition-colors flex items-center gap-2">
-                                    <Icons.Upload /> <span className="hidden sm:inline">Importar Excel/CSV</span>
+                            
+                            <div className="flex gap-2">
+                                <button onClick={() => setIsSubModalOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 transition text-sm font-semibold shadow-sm">
+                                    <Icons.Switch /> Registrar Substituição
                                 </button>
-                            </nav>
+                                <button onClick={() => setIsFormOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition text-sm font-semibold shadow-sm">
+                                    <Icons.Plus /> Nova Turma
+                                </button>
+                                <button onClick={handleExport} className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition text-sm font-semibold shadow-sm">
+                                    <Icons.Download /> Salvar Excel
+                                </button>
+                                <button onClick={() => fileInputRef.current.click()} className="flex items-center gap-2 px-4 py-2 bg-orange-50 text-orange-700 rounded-lg hover:bg-orange-100 transition text-sm font-semibold shadow-sm">
+                                    <Icons.Upload /> Carregar Excel
+                                </button>
+                            </div>
                         </div>
-                    </header>
+                    </nav>
 
-                    <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                        {isMockData && (
-                            <div className="mb-6 bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg flex items-center gap-2 text-sm">
-                                <Icons.AlertCircle />
-                                <span><strong>Modo Demonstração:</strong> Exibindo dados de exemplo. Clique em "Importar" para carregar sua planilha (xlsx, xlsm, csv).</span>
-                            </div>
-                        )}
-                        {uploadError && (
-                            <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center gap-2">
-                                <Icons.AlertCircle />
-                                {uploadError}
-                            </div>
-                        )}
+                    <main className="max-w-7xl mx-auto px-4 py-8">
+                        {/* Abas */}
+                        <div className="flex space-x-4 mb-6 border-b border-gray-200">
+                            <button onClick={() => setActiveTab('dashboard')} className={`py-2 px-4 font-semibold border-b-2 transition ${activeTab === 'dashboard' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                                Visão Geral
+                            </button>
+                            <button onClick={() => setActiveTab('simulator')} className={`py-2 px-4 font-semibold border-b-2 transition ${activeTab === 'simulator' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                                Simulador de Distribuição
+                            </button>
+                            <button onClick={() => setActiveTab('subs')} className={`py-2 px-4 font-semibold border-b-2 transition ${activeTab === 'subs' ? 'border-purple-500 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                                Histórico de Substituições ({substitutions.length})
+                            </button>
+                        </div>
 
                         {activeTab === 'dashboard' && (
-                            <div className="space-y-6 fade-in">
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                    <StatCard title="Total Alunos Ativos" value={instructorStats.reduce((acc, i) => acc + i.totalAlunos, 0)} icon={Icons.Users} color="bg-blue-600" />
-                                    <StatCard title="Turmas Ativas" value={instructorStats.reduce((acc, i) => acc + i.totalTurmas, 0)} icon={Icons.BookOpen} color="bg-orange-500" />
-                                    <StatCard title="Turmas Concluídas" value={processedData.filter(d => d.isFinished).length} icon={Icons.CheckSquare} color="bg-gray-400" />
+                            <div className="fade-in">
+                                {/* Filtros */}
+                                <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-8 flex flex-col md:flex-row gap-4 items-end">
+                                    <div className="flex-1 w-full">
+                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Filtrar por Instrutor</label>
+                                        <div className="relative">
+                                            <select 
+                                                value={filters.instrutor} 
+                                                onChange={e => setFilters({...filters, instrutor: e.target.value})}
+                                                className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
+                                            >
+                                                <option value="">Todos os Instrutores</option>
+                                                {uniqueInstrutores.map(i => <option key={i} value={i}>{i}</option>)}
+                                            </select>
+                                            <div className="absolute left-3 top-2.5 text-gray-400"><Icons.Filter /></div>
+                                        </div>
+                                    </div>
+                                    <div className="flex-1 w-full">
+                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Filtrar por Analista</label>
+                                        <div className="relative">
+                                            <select 
+                                                value={filters.analista} 
+                                                onChange={e => setFilters({...filters, analista: e.target.value})}
+                                                className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
+                                            >
+                                                <option value="">Todos os Analistas</option>
+                                                {uniqueAnalistas.map(a => <option key={a} value={a}>{a}</option>)}
+                                            </select>
+                                            <div className="absolute left-3 top-2.5 text-gray-400"><Icons.Filter /></div>
+                                        </div>
+                                    </div>
+                                    <div className="pb-1 text-sm text-gray-400">
+                                        {filteredData.length} registros
+                                    </div>
                                 </div>
 
-                                <ChartsSection />
+                                <Charts />
 
-                                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                                    <h3 className="text-lg font-bold text-gray-800 mb-6">Detalhamento: Mix de Cursos (Apenas Ativos)</h3>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                        {instructorStats.map((inst) => (
-                                            <div key={inst.nome} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow bg-gray-50">
-                                                <div className="flex justify-between items-center mb-3">
-                                                    <h4 className="font-bold text-blue-900">{inst.nome}</h4>
-                                                    <span className="text-xs bg-white border border-gray-200 text-gray-600 px-2 py-1 rounded-full">{inst.totalAlunos} alunos</span>
+                                <h2 className="text-xl font-bold text-gray-800 mb-4 border-l-4 border-orange-500 pl-3">Visão Geral dos Instrutores</h2>
+                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mb-12">
+                                    {instructorStats.filter(i => {
+                                        // Aplica filtro de instrutor/analista também nos cards
+                                        const matchInst = filters.instrutor === '' || i.nome === filters.instrutor;
+                                        // Analista é mais complexo pois é um Set, verifica se o analista selecionado está no set
+                                        const matchAnalista = filters.analista === '' || i.analistas.includes(filters.analista);
+                                        return matchInst && matchAnalista;
+                                    }).map(inst => (
+                                        <div key={inst.nome} className={`bg-white rounded-xl shadow-sm border-2 p-5 relative transition hover:shadow-md ${inst.alert ? 'border-red-400' : 'border-transparent'}`}>
+                                            {inst.alert && (
+                                                <div className="absolute -top-3 -right-3 bg-red-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow flex items-center gap-1 animate-pulse">
+                                                    <Icons.Alert /> Redistribuir: {inst.alertType}
                                                 </div>
-                                                <div className="space-y-2">
+                                            )}
+                                            
+                                            <div className="flex justify-between items-start mb-4">
+                                                <div>
+                                                    <h3 className="text-lg font-bold text-gray-900">{inst.nome}</h3>
+                                                    <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                                                        <span className="bg-gray-100 px-2 py-0.5 rounded text-gray-600 font-medium text-xs">Analista(s):</span> 
+                                                        <span className="font-semibold text-blue-600">{inst.analistas || 'N/A'}</span>
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            <div className="grid grid-cols-2 gap-4 mb-4">
+                                                <div className="bg-blue-50 p-3 rounded-lg text-center">
+                                                    <span className="block text-2xl font-bold text-blue-800">{inst.totalAlunos}</span>
+                                                    <span className="text-xs text-blue-600 font-semibold uppercase">Jovens</span>
+                                                </div>
+                                                <div className="bg-orange-50 p-3 rounded-lg text-center">
+                                                    <span className="block text-2xl font-bold text-orange-800">{inst.totalTurmas}</span>
+                                                    <span className="text-xs text-orange-600 font-semibold uppercase">Turmas</span>
+                                                </div>
+                                            </div>
+
+                                            <div className="border-t border-gray-100 pt-3">
+                                                <p className="text-xs font-bold text-gray-400 uppercase mb-2">Distribuição de Cursos</p>
+                                                <div className="space-y-2 max-h-32 overflow-y-auto pr-1">
                                                     {Object.entries(inst.cursos).map(([curso, qtd]) => (
                                                         <div key={curso} className="flex justify-between text-sm items-center">
-                                                            <span className="text-gray-600 truncate max-w-[150px]" title={curso}>{curso}</span>
+                                                            <span className="text-gray-600 truncate w-40" title={curso}>{curso}</span>
                                                             <div className="flex items-center gap-2">
-                                                                <div className="w-16 h-2 bg-gray-200 rounded-full overflow-hidden">
-                                                                    <div className="h-full bg-orange-400 rounded-full" style={{ width: `${(qtd / inst.totalTurmas) * 100}%` }}></div>
+                                                                <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                                                    <div className="h-full bg-blue-500" style={{width: `${(qtd/inst.totalTurmas)*100}%`}}></div>
                                                                 </div>
-                                                                <span className="font-bold text-gray-700 text-xs">{qtd}</span>
+                                                                <span className="font-mono text-xs font-bold text-gray-500">{qtd}</span>
                                                             </div>
                                                         </div>
                                                     ))}
                                                 </div>
                                             </div>
-                                        ))}
-                                    </div>
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
                         )}
 
                         {activeTab === 'simulator' && (
-                            <div className="max-w-4xl mx-auto space-y-8 fade-in">
-                                <div className="bg-gradient-to-r from-blue-900 to-blue-800 text-white p-8 rounded-2xl shadow-lg">
-                                    <h2 className="text-2xl font-bold mb-2">Simulador de Distribuição</h2>
-                                    <p className="text-blue-200 mb-6">Analisa a carga ATUAL de turmas ativas.</p>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+                            <div className="fade-in max-w-4xl mx-auto">
+                                <div className="bg-white rounded-xl shadow-lg border border-blue-100 overflow-hidden mb-8">
+                                    <div className="bg-gradient-to-r from-blue-900 to-blue-800 p-6 text-white">
+                                        <h2 className="text-xl font-bold flex items-center gap-2"><Icons.Search /> Simulador de Distribuição</h2>
+                                        <p className="text-blue-200 text-sm mt-1">Preencha os dados da nova turma para ver quem está mais apto a assumir.</p>
+                                    </div>
+                                    <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
                                         <div>
-                                            <label className="block text-sm font-medium text-blue-100 mb-1">Nome do Curso</label>
-                                            <select value={newClassCourse} onChange={(e) => setNewClassCourse(e.target.value)} className="w-full bg-white/10 border border-blue-400 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-400 option:text-gray-800">
-                                                {[...new Set(processedData.map(d => d.curso))].sort().map(c => (
-                                                    <option key={c} value={c} className="text-gray-800">{c}</option>
-                                                ))}
-                                                <option className="text-gray-800" value="Novo Curso">Outro...</option>
+                                            <label className="block text-sm font-bold text-gray-700 mb-1">Curso da Nova Turma</label>
+                                            <select 
+                                                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                                value={simData.curso}
+                                                onChange={e => setSimData({...simData, curso: e.target.value})}
+                                            >
+                                                {COURSE_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
                                             </select>
                                         </div>
                                         <div>
-                                            <label className="block text-sm font-medium text-blue-100 mb-1">Total de Alunos</label>
-                                            <input type="number" value={newClassStudents} onChange={(e) => setNewClassStudents(Number(e.target.value))} className="w-full bg-white/10 border border-blue-400 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                                            <label className="block text-sm font-bold text-gray-700 mb-1">Quantidade de Jovens</label>
+                                            <input 
+                                                type="number" 
+                                                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                                value={simData.alunos}
+                                                onChange={e => setSimData({...simData, alunos: e.target.value})}
+                                            />
                                         </div>
                                     </div>
-                                    <button onClick={handleSimulate} className="mt-6 w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-lg shadow-md transition-all flex items-center justify-center gap-2">
-                                        <Icons.Search /> Encontrar Melhor Instrutor
-                                    </button>
+                                    <div className="px-6 pb-6">
+                                        <button onClick={handleSimulate} className="w-full py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 shadow transition transform hover:scale-[1.01]">
+                                            Analisar Carga e Recomendar
+                                        </button>
+                                    </div>
                                 </div>
-                                {recommendation && (
-                                    <div className="space-y-4 fade-in">
-                                        <div className="bg-white border-l-4 border-green-500 rounded-lg shadow-md p-6 relative overflow-hidden">
-                                            <div className="absolute top-0 right-0 p-4 opacity-10 text-green-500"><Icons.CheckCircle /></div>
-                                            <div className="relative z-10">
-                                                <p className="text-sm text-green-600 font-bold uppercase tracking-wider mb-1">Melhor Opção</p>
-                                                <h2 className="text-3xl font-bold text-gray-800 mb-2">{recommendation[0].nome}</h2>
-                                                <p className="text-gray-600 max-w-lg mb-4">Menor carga combinada.</p>
-                                                <div className="flex flex-wrap gap-4 text-sm">
-                                                    <div className="bg-gray-100 px-3 py-1 rounded">
-                                                        <span className="block text-gray-500 text-xs">Alunos Atuais</span>
-                                                        <span className="font-bold">{recommendation[0].details.alunos}</span>
+
+                                {recommendations && (
+                                    <div className="space-y-4">
+                                        <h3 className="text-lg font-bold text-gray-800 pl-2 border-l-4 border-green-500">Ranking de Recomendação</h3>
+                                        {recommendations.map((inst, idx) => (
+                                            <div key={inst.nome} className={`bg-white p-4 rounded-xl shadow-sm border flex flex-col md:flex-row items-center justify-between gap-4 transition ${idx === 0 ? 'border-green-400 ring-1 ring-green-100' : 'border-gray-200'}`}>
+                                                <div className="flex items-center gap-4 flex-1">
+                                                    <div className={`w-8 h-8 flex items-center justify-center rounded-full font-bold text-sm ${idx === 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                                                        #{idx + 1}
                                                     </div>
-                                                    <div className="bg-gray-100 px-3 py-1 rounded">
-                                                        <span className="block text-gray-500 text-xs">Turmas de {newClassCourse}</span>
-                                                        <span className="font-bold">{recommendation[0].details.mesmoCurso}</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                                            <div className="divide-y divide-gray-100">
-                                                {recommendation.slice(1).map((inst, idx) => (
-                                                    <div key={inst.nome} className="px-6 py-4 flex items-center justify-between hover:bg-gray-50">
-                                                        <div className="flex items-center gap-4">
-                                                            <span className="text-gray-400 font-mono text-lg w-6">#{idx + 2}</span>
-                                                            <div>
-                                                                <p className="font-medium text-gray-800">{inst.nome}</p>
-                                                                <p className="text-xs text-gray-500">{inst.details.alunos} alunos • {inst.details.mesmoCurso} turmas deste curso</p>
-                                                            </div>
+                                                    <div>
+                                                        <h4 className="font-bold text-gray-800 text-lg">{inst.nome}</h4>
+                                                        <div className="flex gap-4 text-xs text-gray-500 mt-1">
+                                                            <span>Atual: <strong>{inst.totalAlunos}</strong> alunos</span>
+                                                            <span>Turmas deste curso: <strong>{inst.currentCourseCount}</strong></span>
+                                                            <span>Projeção: <strong>{inst.projectedAlunos}</strong></span>
                                                         </div>
                                                     </div>
-                                                ))}
+                                                </div>
+                                                
+                                                <div className="flex items-center gap-3">
+                                                    {idx === 0 && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded">Melhor Opção</span>}
+                                                    <button 
+                                                        onClick={() => acceptSuggestion(inst.nome)}
+                                                        className="px-4 py-2 bg-gray-900 text-white text-sm font-bold rounded-lg hover:bg-gray-700 flex items-center gap-2"
+                                                    >
+                                                        <Icons.Check /> Criar Turma
+                                                    </button>
+                                                </div>
                                             </div>
-                                        </div>
+                                        ))}
                                     </div>
                                 )}
                             </div>
                         )}
 
-                        {activeTab === 'list' && (
-                            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden fade-in">
+                        {activeTab === 'subs' && (
+                            <div className="bg-white rounded-xl shadow border border-gray-200 overflow-hidden fade-in">
                                 <div className="p-6 border-b border-gray-200 flex justify-between items-center">
-                                    <h3 className="font-bold text-gray-800 text-lg">Base de Dados Completa</h3>
-                                    <span className="text-sm bg-blue-100 text-blue-800 px-3 py-1 rounded-full font-bold">
-                                        {processedData.length} Turmas
-                                    </span>
+                                    <div>
+                                        <h3 className="text-lg font-bold text-gray-800">Registro de Substituições</h3>
+                                        <p className="text-sm text-gray-500">Histórico de trocas por ausência.</p>
+                                    </div>
+                                    <button onClick={() => setIsSubModalOpen(true)} className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold text-sm shadow">
+                                        + Nova Substituição
+                                    </button>
                                 </div>
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-sm text-left text-gray-500">
-                                        <thead className="text-xs text-gray-700 uppercase bg-gray-50">
-                                            <tr>
-                                                <th className="px-6 py-3">ID Turma</th>
-                                                <th className="px-6 py-3">Curso</th>
-                                                <th className="px-6 py-3 text-center">Alunos</th>
-                                                <th className="px-6 py-3">Término</th>
-                                                <th className="px-6 py-3">Instr. 1</th>
-                                                <th className="px-6 py-3">Instr. 2</th>
-                                                <th className="px-6 py-3">Data Transf.</th>
-                                                <th className="px-6 py-3">Status / Resp.</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {processedData.map((row, idx) => (
-                                                <tr key={idx} className={`border-b ${row.isFinished ? 'bg-gray-100 text-gray-400' : 'bg-white hover:bg-gray-50'}`}>
-                                                    <td className="px-6 py-4 font-medium">{row.id}</td>
-                                                    <td className="px-6 py-4">
-                                                        <span className={`px-2 py-1 rounded-full text-xs font-semibold
-                                                            ${row.isFinished ? 'bg-gray-200 text-gray-500' :
-                                                            row.curso.includes('Administrativo') ? 'bg-blue-100 text-blue-800' : 
-                                                            row.curso.includes('Vendas') ? 'bg-green-100 text-green-800' : 
-                                                            'bg-orange-100 text-orange-800'}`}>
-                                                            {row.curso}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-6 py-4 text-center font-bold">{row.alunos}</td>
-                                                    <td className="px-6 py-4 text-xs font-mono">{row.termino}</td>
-                                                    <td className="px-6 py-4">{row.instrutor1}</td>
-                                                    <td className="px-6 py-4">{row.instrutor2 || '-'}</td>
-                                                    <td className="px-6 py-4 text-xs font-mono">{row.dataTransferencia || '-'}</td>
-                                                    <td className="px-6 py-4">
-                                                        <div className="flex items-center gap-2">
-                                                            {row.isFinished ? (
-                                                                <span className="flex items-center gap-1 font-bold text-gray-500">
-                                                                    <Icons.CheckSquare /> Concluída
-                                                                </span>
-                                                            ) : (
-                                                                <>
-                                                                    <span className="font-bold text-blue-900">{row.instrutorAtual}</span>
-                                                                    {row.statusTransferencia === 'Transferido' && (
-                                                                        <Icons.ArrowRightLeft className="text-orange-500 w-4 h-4" title="Transferida" />
-                                                                    )}
-                                                                </>
-                                                            )}
-                                                        </div>
-                                                    </td>
+                                {substitutions.length === 0 ? (
+                                    <div className="p-12 text-center text-gray-400">Nenhuma substituição registrada.</div>
+                                ) : (
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-sm text-left text-gray-500">
+                                            <thead className="text-xs text-gray-700 uppercase bg-gray-50">
+                                                <tr>
+                                                    <th className="px-6 py-3">Data</th>
+                                                    <th className="px-6 py-3">Turma</th>
+                                                    <th className="px-6 py-3 text-red-600">Instrutor Ausente</th>
+                                                    <th className="px-6 py-3 text-green-600">Substituto</th>
+                                                    <th className="px-6 py-3">Motivo</th>
                                                 </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
+                                            </thead>
+                                            <tbody>
+                                                {substitutions.map((sub, idx) => (
+                                                    <tr key={idx} className="bg-white border-b hover:bg-gray-50">
+                                                        <td className="px-6 py-4 font-mono">{sub.data}</td>
+                                                        <td className="px-6 py-4 font-bold">{sub.turmaId}</td>
+                                                        <td className="px-6 py-4 text-red-500 font-medium">{sub.instrutorAusente}</td>
+                                                        <td className="px-6 py-4 text-green-600 font-bold bg-green-50">{sub.instrutorSubstituto}</td>
+                                                        <td className="px-6 py-4">{sub.motivo}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </main>
+
+                    {/* MODAL NOVA TURMA */}
+                    {isFormOpen && (
+                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm fade-in">
+                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                                <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-blue-900 text-white rounded-t-2xl">
+                                    <h3 className="text-xl font-bold flex items-center gap-2"><Icons.Plus /> Adicionar Nova Turma</h3>
+                                    <button onClick={() => setIsFormOpen(false)} className="hover:bg-white/20 p-1 rounded-full text-white">✕</button>
+                                </div>
+                                <form onSubmit={handleAddClass} className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="md:col-span-2">
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">ID da Turma</label>
+                                        <input required type="text" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" 
+                                            value={newClass.id} onChange={e => setNewClass({...newClass, id: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">Curso</label>
+                                        <select required className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                                            value={newClass.curso} onChange={e => setNewClass({...newClass, curso: e.target.value})}>
+                                            <option value="">Selecione...</option>
+                                            {COURSE_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">Total de Jovens</label>
+                                        <input required type="number" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" 
+                                            value={newClass.alunos} onChange={e => setNewClass({...newClass, alunos: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">Analista</label>
+                                        <input required type="text" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" 
+                                            value={newClass.analista} onChange={e => setNewClass({...newClass, analista: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">Data Transferência</label>
+                                        <input type="date" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" 
+                                            value={newClass.dataTransferencia} onChange={e => setNewClass({...newClass, dataTransferencia: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">Início</label>
+                                        <input required type="date" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" 
+                                            value={newClass.inicio} onChange={e => setNewClass({...newClass, inicio: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">Término</label>
+                                        <input required type="date" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" 
+                                            value={newClass.termino} onChange={e => setNewClass({...newClass, termino: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">Instrutor 1</label>
+                                        <input required type="text" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" 
+                                            value={newClass.instrutor1} onChange={e => setNewClass({...newClass, instrutor1: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">Instrutor 2 (Opcional)</label>
+                                        <input type="text" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" 
+                                            value={newClass.instrutor2} onChange={e => setNewClass({...newClass, instrutor2: e.target.value})} />
+                                    </div>
+                                    
+                                    <div className="md:col-span-2 pt-4 flex gap-3">
+                                        <button type="button" onClick={() => setIsFormOpen(false)} className="flex-1 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 font-bold">Cancelar</button>
+                                        <button type="submit" className="flex-1 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold shadow-lg">Salvar Turma</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODAL NOVA SUBSTITUIÇÃO */}
+                    {isSubModalOpen && (
+                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm fade-in">
+                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+                                <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-purple-700 text-white rounded-t-2xl">
+                                    <h3 className="text-xl font-bold flex items-center gap-2"><Icons.Switch /> Registrar Substituição</h3>
+                                    <button onClick={() => setIsSubModalOpen(false)} className="hover:bg-white/20 p-1 rounded-full text-white">✕</button>
+                                </div>
+                                <form onSubmit={handleAddSub} className="p-6 space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">Data da Falta</label>
+                                        <input required type="date" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-purple-500" 
+                                            value={newSub.data} onChange={e => setNewSub({...newSub, data: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">Selecione a Turma</label>
+                                        <select required className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-purple-500"
+                                            value={newSub.turmaId} onChange={e => setNewSub({...newSub, turmaId: e.target.value})}>
+                                            <option value="">Selecione...</option>
+                                            {processedData.filter(t => t.status === 'Ativo' || t.status === 'Transferido').map(t => (
+                                                <option key={t.id} value={t.id}>{t.id} - {t.curso} ({t.instrutorAtual})</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-bold text-red-600 mb-1">Instrutor Ausente</label>
+                                            <input required type="text" className="w-full p-2 border border-red-200 bg-red-50 rounded" 
+                                                value={newSub.instrutorAusente} 
+                                                onChange={e => setNewSub({...newSub, instrutorAusente: e.target.value})}
+                                                placeholder="Nome..." />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-bold text-green-600 mb-1">Instrutor Substituto</label>
+                                            <div className="relative">
+                                                <input required type="text" className="w-full p-2 border border-green-200 bg-green-50 rounded pr-8" 
+                                                    value={newSub.instrutorSubstituto} 
+                                                    onChange={e => setNewSub({...newSub, instrutorSubstituto: e.target.value})}
+                                                    placeholder="Nome..." />
+                                                <div className="absolute right-2 top-2.5 text-green-500 text-xs font-bold">AUTO</div>
+                                            </div>
+                                            <p className="text-xs text-gray-400 mt-1">Sugerido automaticamente se possível.</p>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">Motivo</label>
+                                        <input type="text" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-purple-500" 
+                                            value={newSub.motivo} onChange={e => setNewSub({...newSub, motivo: e.target.value})} 
+                                            placeholder="Ex: Atestado médico, Falta injustificada..." />
+                                    </div>
+                                    
+                                    <div className="pt-4 flex gap-3">
+                                        <button type="button" onClick={() => setIsSubModalOpen(false)} className="flex-1 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 font-bold">Cancelar</button>
+                                        <button type="submit" className="flex-1 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold shadow-lg">Confirmar</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         }
