@@ -8,7 +8,7 @@
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- VERSÕES ESTÁVEIS -->
+    <!-- VERSÕES ESTÁVEIS (React, Recharts, SheetJS) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
@@ -34,7 +34,7 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
         
-        // Ícones
+        // --- ÍCONES ---
         const Icons = {
             Users: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>,
             BookOpen: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>,
@@ -50,6 +50,7 @@
             Clock: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
         };
 
+        // Dados de Exemplo para não iniciar vazio
         const MOCK_DATA = [
             { id: '202500029', curso: 'Administrativo', analista: 'Bianca', alunos: 31, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Sheila', instrutor2: 'Bruna', dataTransferencia: '2026-02-04' },
             { id: '202500118', curso: 'Administrativo', analista: 'Bianca', alunos: 31, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Bruna', instrutor2: 'Jaqueline', dataTransferencia: '2026-02-04' },
@@ -66,61 +67,58 @@
             'Outro'
         ];
 
+        // --- COMPONENTE PRINCIPAL ---
         function App() {
-            // --- ESTADOS ---
+            // Estados Principais
             const [data, setData] = useState(MOCK_DATA);
             const [substitutions, setSubstitutions] = useState([]); 
             const [filters, setFilters] = useState({ instrutor: '', analista: '' });
             
-            // Modais e Tabs
+            // Navegação e Modais
+            const [activeTab, setActiveTab] = useState('dashboard'); 
             const [isFormOpen, setIsFormOpen] = useState(false);
             const [isSubModalOpen, setIsSubModalOpen] = useState(false);
-            const [activeTab, setActiveTab] = useState('dashboard'); 
-
+            
+            // Formulários
             const [newClass, setNewClass] = useState({
                 id: '', curso: '', analista: '', alunos: '', inicio: '', termino: '', instrutor1: '', instrutor2: '', dataTransferencia: ''
             });
-
             const [newSub, setNewSub] = useState({
                 data: '', turmaId: '', instrutorAusente: '', instrutorSubstituto: '', motivo: '', status: 'Pendente'
             });
-
-            // Estado para o Simulador
+            
+            // Simulador
             const [simData, setSimData] = useState({ curso: 'Administrativo', alunos: 30 });
             const [recommendations, setRecommendations] = useState(null);
 
-            // Alertas de Substituição Próxima
+            // Substituições Urgentes
             const [urgentSubs, setUrgentSubs] = useState([]);
 
             const fileInputRef = useRef(null);
 
-            // --- LÓGICA DE DADOS SEGUROS ---
+            // --- 1. PROCESSAMENTO SEGURO DE DADOS ---
             const processedData = useMemo(() => {
                 const today = new Date();
                 today.setHours(0,0,0,0);
 
+                // Mapeia e protege contra linhas vazias ou corrompidas
                 return data.map(row => {
-                    // Proteção contra dados corrompidos
                     if (!row) return null;
 
                     let currentInstructor = row.instrutor1;
                     let status = 'Ativo';
                     let isFinished = false;
 
-                    // Verifica Término
-                    if (row.termino) {
-                        try {
+                    // Tratamento seguro de datas
+                    try {
+                        if (row.termino) {
                             const terminoDate = new Date(row.termino + 'T00:00:00');
                             if (!isNaN(terminoDate.getTime()) && today > terminoDate) {
                                 status = 'Concluída';
                                 isFinished = true;
                             }
-                        } catch(e) {}
-                    }
-
-                    // Verifica Transferência
-                    if (!isFinished && row.instrutor2 && row.dataTransferencia) {
-                        try {
+                        }
+                        if (!isFinished && row.instrutor2 && row.dataTransferencia) {
                             const transferDate = new Date(row.dataTransferencia + 'T00:00:00'); 
                             if (!isNaN(transferDate.getTime())) {
                                 if (today >= transferDate) {
@@ -128,16 +126,18 @@
                                     status = 'Transferido';
                                 }
                             }
-                        } catch(e) {}
+                        }
+                    } catch(e) {
+                        console.warn("Erro ao processar linha:", row, e);
                     }
 
-                    if (!currentInstructor || currentInstructor.trim() === '') currentInstructor = 'Não Atribuído';
+                    if (!currentInstructor || String(currentInstructor).trim() === '') currentInstructor = 'Não Atribuído';
 
                     return { ...row, instrutorAtual: currentInstructor, status, isFinished };
-                }).filter(Boolean); // Remove nulos
+                }).filter(Boolean); // Remove nulos gerados por erros
             }, [data]);
 
-            // --- VERIFICAR SUBSTITUIÇÕES URGENTES (HOJE/AMANHÃ) ---
+            // --- 2. DETECÇÃO DE SUBSTITUIÇÕES URGENTES (Hoje/Amanhã) ---
             useEffect(() => {
                 const today = new Date();
                 today.setHours(0,0,0,0);
@@ -145,80 +145,62 @@
                 tomorrow.setDate(tomorrow.getDate() + 1);
 
                 const urgent = substitutions.filter(sub => {
-                    if (sub.status === 'Confirmada') return false; // Já resolvido
+                    if (sub.status === 'Confirmada') return false; 
                     if (!sub.data) return false;
                     
-                    const subDate = new Date(sub.data + 'T00:00:00');
-                    if (isNaN(subDate.getTime())) return false;
-
-                    // Verifica se é hoje ou amanhã
-                    return subDate.getTime() === today.getTime() || subDate.getTime() === tomorrow.getTime();
+                    try {
+                        const subDate = new Date(sub.data + 'T00:00:00');
+                        if (isNaN(subDate.getTime())) return false;
+                        // Verifica se é hoje ou amanhã
+                        return subDate.getTime() === today.getTime() || subDate.getTime() === tomorrow.getTime();
+                    } catch(e) { return false; }
                 });
 
                 setUrgentSubs(urgent);
             }, [substitutions]);
 
-            const confirmSubstitution = (indexInUrgent, originalSub) => {
-                // Encontra a substituição no array original e atualiza
+            const confirmSubstitution = (originalSub) => {
                 const updatedSubs = substitutions.map(s => {
-                    if (s === originalSub) {
-                        return { ...s, status: 'Confirmada' };
-                    }
+                    if (s === originalSub) return { ...s, status: 'Confirmada' };
                     return s;
                 });
                 setSubstitutions(updatedSubs);
+                alert("Troca confirmada com sucesso!");
             };
 
-            // --- LÓGICA DE SUGESTÃO DE SUBSTITUIÇÃO ---
-            useEffect(() => {
-                if (newSub.turmaId && newSub.data) {
-                    const turma = processedData.find(t => t.id === newSub.turmaId);
-                    if (turma) {
-                        const subDate = new Date(newSub.data + 'T00:00:00');
-                        let titularNaData = turma.instrutor1;
-                        if (turma.instrutor2 && turma.dataTransferencia) {
-                            const transfDate = new Date(turma.dataTransferencia + 'T00:00:00');
-                            if (subDate >= transfDate) titularNaData = turma.instrutor2;
-                        }
-                        let sugestaoSubstituto = '';
-                        if (titularNaData === turma.instrutor1 && turma.instrutor2) sugestaoSubstituto = turma.instrutor2;
-                        else if (titularNaData === turma.instrutor2 && turma.instrutor1) sugestaoSubstituto = turma.instrutor1;
-
-                        setNewSub(prev => ({
-                            ...prev,
-                            instrutorAusente: titularNaData,
-                            instrutorSubstituto: prev.instrutorSubstituto || sugestaoSubstituto 
-                        }));
-                    }
-                }
-            }, [newSub.turmaId, newSub.data, processedData]);
-
-
+            // --- 3. LÓGICA DO DASHBOARD ---
             const filteredData = useMemo(() => {
                 return processedData.filter(row => {
-                    const matchInstrutor = filters.instrutor === '' || row.instrutorAtual === filters.instrutor;
-                    const matchAnalista = filters.analista === '' || row.analista === filters.analista;
+                    const iName = row.instrutorAtual || '';
+                    const aName = row.analista || '';
+                    const matchInstrutor = filters.instrutor === '' || iName === filters.instrutor;
+                    const matchAnalista = filters.analista === '' || aName === filters.analista;
                     return matchInstrutor && matchAnalista;
                 });
             }, [processedData, filters]);
 
-            // Stats
             const instructorStats = useMemo(() => {
                 const stats = {};
                 processedData.forEach(row => {
                     if (row.isFinished || row.instrutorAtual === 'Não Atribuído') return;
                     const inst = row.instrutorAtual;
+                    
                     if (!stats[inst]) stats[inst] = { nome: inst, totalAlunos: 0, totalTurmas: 0, analistas: new Set(), cursos: {} };
-                    stats[inst].totalAlunos += parseInt(row.alunos || 0);
+                    
+                    // Proteção contra NaN
+                    const qtdAlunos = parseInt(row.alunos);
+                    stats[inst].totalAlunos += isNaN(qtdAlunos) ? 0 : qtdAlunos;
                     stats[inst].totalTurmas += 1;
+                    
                     if (row.analista) stats[inst].analistas.add(row.analista);
                     const curso = row.curso || 'Outros';
                     stats[inst].cursos[curso] = (stats[inst].cursos[curso] || 0) + 1;
                 });
 
                 const allStats = Object.values(stats);
-                const avgAlunos = allStats.reduce((acc, i) => acc + i.totalAlunos, 0) / (allStats.length || 1);
-                const avgTurmas = allStats.reduce((acc, i) => acc + i.totalTurmas, 0) / (allStats.length || 1);
+                const count = allStats.length || 1;
+                const avgAlunos = allStats.reduce((acc, i) => acc + i.totalAlunos, 0) / count;
+                const avgTurmas = allStats.reduce((acc, i) => acc + i.totalTurmas, 0) / count;
 
                 return allStats.map(inst => {
                     const overloadAlunos = inst.totalAlunos > avgAlunos * 1.3;
@@ -232,107 +214,91 @@
                 }).sort((a,b) => b.totalAlunos - a.totalAlunos);
             }, [processedData]);
 
-            const uniqueInstrutores = [...new Set(processedData.flatMap(d => [d.instrutor1, d.instrutor2]))].filter(d => d && d !== 'Não Atribuído').sort();
-            const uniqueAnalistas = [...new Set(processedData.map(d => d.analista))].filter(Boolean).sort();
-
-            // --- SIMULADOR ---
-            const handleSimulate = () => {
-                if (!simData.curso || !simData.alunos) return;
-
-                const scores = instructorStats.map(inst => {
-                    const loadScore = inst.totalAlunos * 1; 
-                    const classScore = inst.totalTurmas * 15; 
-                    const courseRepetitionScore = (inst.cursos[simData.curso] || 0) * 50; 
-                    
-                    const finalScore = loadScore + classScore + courseRepetitionScore;
-
-                    return {
-                        ...inst,
-                        score: finalScore,
-                        projectedAlunos: inst.totalAlunos + parseInt(simData.alunos),
-                        projectedTurmas: inst.totalTurmas + 1,
-                        currentCourseCount: inst.cursos[simData.curso] || 0
-                    };
+            // Listas para Filtros
+            const uniqueInstrutores = useMemo(() => {
+                const set = new Set();
+                processedData.forEach(d => {
+                    if (d.instrutor1) set.add(d.instrutor1);
+                    if (d.instrutor2) set.add(d.instrutor2);
                 });
+                return Array.from(set).filter(d => d !== 'Não Atribuído').sort();
+            }, [processedData]);
 
-                setRecommendations(scores.sort((a, b) => a.score - b.score));
-            };
+            const uniqueAnalistas = useMemo(() => {
+                return [...new Set(processedData.map(d => d.analista))].filter(Boolean).sort();
+            }, [processedData]);
 
-            const acceptSuggestion = (instrutorNome) => {
-                setNewClass(prev => ({
-                    ...prev,
-                    curso: simData.curso,
-                    alunos: simData.alunos,
-                    instrutor1: instrutorNome
-                }));
-                setIsFormOpen(true);
-            };
-
-            // --- UPLOAD SEGURO (FIX TELA BRANCA) ---
+            // --- 4. UPLOAD ROBUSTO (SEM TELA BRANCA) ---
             const handleFileUpload = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
+                
                 const reader = new FileReader();
                 reader.onload = (evt) => {
                     try {
                         const dataBuffer = evt.target.result;
-                        // readAsArrayBuffer é mais robusto
+                        // Leitura segura como ArrayBuffer
                         const wb = XLSX.read(dataBuffer, { type: 'array', cellDates: true });
                         
-                        const wsName = wb.SheetNames[0];
-                        const ws = wb.Sheets[wsName];
+                        // Aba 1: Turmas
+                        const ws = wb.Sheets[wb.SheetNames[0]];
                         const jsonData = XLSX.utils.sheet_to_json(ws, { header: 1 });
-                        
                         const newRows = [];
-                        // Skip header
+                        
+                        // Pula cabeçalho (i=1)
                         for(let i=1; i<jsonData.length; i++) {
                             const row = jsonData[i];
-                            // Verificação de segurança: a linha deve existir e ter pelo menos a Turma ou Curso
+                            // Verifica se linha existe e tem pelo menos ID ou Curso
                             if(row && (row[0] || row[1])) {
-                                const parseDate = (d) => {
-                                    if (!d) return '';
-                                    try {
-                                        if(d instanceof Date) return d.toISOString().split('T')[0];
-                                        if(typeof d === 'string') {
-                                            d = d.trim();
-                                            // Ignora strings curtas como "OK", "X", etc
-                                            if (d.length < 8) return '';
-                                            if(d.match(/^\d{2}\/\d{2}\/\d{4}$/)) { const [dd,mm,yyyy] = d.split('/'); return `${yyyy}-${mm}-${dd}`; }
-                                            if(d.match(/^\d{4}-\d{2}-\d{2}$/)) return d;
-                                        }
-                                    } catch (err) { return ''; }
+                                // Parser de data ultra-seguro
+                                const safeDate = (val) => {
+                                    if (!val) return '';
+                                    if (val instanceof Date) return val.toISOString().split('T')[0];
+                                    
+                                    const str = String(val).trim();
+                                    // Ignora lixo como "OK", "X", "1"
+                                    if (str.length < 8) return '';
+                                    
+                                    // Tenta DD/MM/YYYY
+                                    if (str.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+                                        const [dd,mm,yyyy] = str.split('/');
+                                        return `${yyyy}-${mm}-${dd}`;
+                                    }
+                                    // Tenta YYYY-MM-DD
+                                    if (str.match(/^\d{4}-\d{2}-\d{2}$/)) return str;
+                                    
                                     return '';
-                                }
+                                };
 
-                                // Mapeamento defensivo dos índices
-                                // Garante que não quebra se a coluna não existir
                                 newRows.push({
                                     id: row[0] || `S/ID-${i}`,
-                                    curso: row[1] || 'Não Informado',
+                                    curso: row[1] || 'Não Inf.',
                                     analista: row[2] || '',
-                                    alunos: row[3] || 0,
-                                    inicio: parseDate(row[4]),
-                                    termino: parseDate(row[5]),
+                                    alunos: parseInt(row[3]) || 0, // Garante número
+                                    inicio: safeDate(row[4]),
+                                    termino: safeDate(row[5]),
                                     instrutor1: row[6] || '',
                                     instrutor2: row[7] || '',
-                                    dataTransferencia: parseDate(row[8]) // Coluna I (Index 8)
+                                    dataTransferencia: safeDate(row[8]) // Coluna I
                                 });
                             }
                         }
 
-                        // Ler Substituições (Aba 2)
+                        // Aba 2: Substituições (se existir)
                         const subRows = [];
                         if (wb.SheetNames.length > 1) {
                             const wsSubName = wb.SheetNames[1];
-                            if (wsSubName.toLowerCase().includes('subst')) {
+                            // Tenta encontrar aba de substituições
+                            if (wsSubName.toLowerCase().includes('sub') || wb.SheetNames.length === 2) {
                                 const wsSub = wb.Sheets[wsSubName];
                                 const jsonSub = XLSX.utils.sheet_to_json(wsSub, { header: 1 });
                                 for(let i=1; i<jsonSub.length; i++) {
                                     const row = jsonSub[i];
                                     if(row && row[0]) {
-                                        const parseDate = (d) => { if(d instanceof Date) return d.toISOString().split('T')[0]; return d; };
+                                        let d = row[0];
+                                        if (d instanceof Date) d = d.toISOString().split('T')[0];
                                         subRows.push({
-                                            data: parseDate(row[0]),
+                                            data: d,
                                             turmaId: row[1],
                                             instrutorAusente: row[2],
                                             instrutorSubstituto: row[3],
@@ -347,74 +313,139 @@
                         if (newRows.length > 0) {
                             setData(newRows);
                             setSubstitutions(subRows);
-                            alert(`${newRows.length} turmas importadas com sucesso!`);
+                            alert(`Importação concluída!\nTurmas: ${newRows.length}\nSubstituições: ${subRows.length}`);
                         } else {
-                            alert('Nenhum dado válido encontrado. Verifique o arquivo.');
+                            alert("O arquivo parece vazio ou inválido. Verifique se é a planilha correta.");
                         }
-                    } catch (err) { 
+
+                    } catch (err) {
                         console.error(err);
-                        alert('Erro ao ler arquivo. Verifique se é um Excel válido.'); 
+                        alert("Erro grave ao processar o arquivo. Verifique se não está corrompido.");
                     }
                 };
                 reader.readAsArrayBuffer(file);
                 e.target.value = null; 
             };
 
+            const handleExport = () => {
+                try {
+                    const wb = XLSX.utils.book_new();
+                    
+                    // 1. Aba Turmas
+                    const headers = ['Turma', 'Curso', 'Analista', 'Alunos', 'Início', 'Término', 'Instrutor 1', 'Instrutor 2', 'Data Transferência', 'Resp. Atual', 'Status'];
+                    const exportRows = data.map(row => {
+                        const today = new Date(); today.setHours(0,0,0,0);
+                        let currInst = row.instrutor1;
+                        let st = 'Ativo';
+                        // Recalcula status visual
+                        try {
+                            if (row.termino) {
+                                const t = new Date(row.termino+'T00:00:00');
+                                if (!isNaN(t) && today > t) st = 'Concluída';
+                            }
+                            if (st !== 'Concluída' && row.instrutor2 && row.dataTransferencia) {
+                                const tf = new Date(row.dataTransferencia+'T00:00:00');
+                                if (!isNaN(tf) && today >= tf) currInst = row.instrutor2;
+                            }
+                        } catch(e) {}
+                        return [row.id, row.curso, row.analista, row.alunos, row.inicio, row.termino, row.instrutor1, row.instrutor2, row.dataTransferencia, currInst, st];
+                    });
+                    const wsData = [headers, ...exportRows];
+                    const ws = XLSX.utils.aoa_to_sheet(wsData);
+                    XLSX.utils.book_append_sheet(wb, ws, "Base de Turmas");
+
+                    // 2. Aba Substituições
+                    const subHeaders = ['Data', 'Turma ID', 'Instrutor Ausente', 'Instrutor Substituto', 'Motivo', 'Status'];
+                    const subExportRows = substitutions.map(s => [s.data, s.turmaId, s.instrutorAusente, s.instrutorSubstituto, s.motivo, s.status]);
+                    const wsSubData = [subHeaders, ...subExportRows];
+                    const wsSub = XLSX.utils.aoa_to_sheet(wsSubData);
+                    XLSX.utils.book_append_sheet(wb, wsSub, "Substituicoes");
+
+                    XLSX.writeFile(wb, "Senac_Gestao_Turmas.xlsx");
+                } catch (err) {
+                    alert("Erro ao exportar arquivo: " + err.message);
+                }
+            };
+
+            // Sugestão Automática de Substituto
+            useEffect(() => {
+                if (newSub.turmaId && newSub.data) {
+                    const turma = processedData.find(t => t.id === newSub.turmaId);
+                    if (turma) {
+                        // Descobre titular na data
+                        const subDate = new Date(newSub.data + 'T00:00:00');
+                        let titularNaData = turma.instrutor1;
+                        if (turma.instrutor2 && turma.dataTransferencia) {
+                            const transfDate = new Date(turma.dataTransferencia + 'T00:00:00');
+                            if (subDate >= transfDate) titularNaData = turma.instrutor2;
+                        }
+                        
+                        // Sugere o outro instrutor
+                        let sugestao = '';
+                        if (titularNaData === turma.instrutor1 && turma.instrutor2) sugestao = turma.instrutor2;
+                        else if (titularNaData === turma.instrutor2 && turma.instrutor1) sugestao = turma.instrutor1;
+
+                        setNewSub(prev => ({
+                            ...prev,
+                            instrutorAusente: titularNaData,
+                            instrutorSubstituto: prev.instrutorSubstituto || sugestao 
+                        }));
+                    }
+                }
+            }, [newSub.turmaId, newSub.data, processedData]);
+
+            // Handlers de Formulários
             const handleAddClass = (e) => {
                 e.preventDefault();
                 setData([...data, { ...newClass }]);
                 setIsFormOpen(false);
                 setNewClass({ id: '', curso: '', analista: '', alunos: '', inicio: '', termino: '', instrutor1: '', instrutor2: '', dataTransferencia: '' });
-                alert("Turma adicionada com sucesso!");
+                alert("Turma adicionada!");
             };
-
             const handleAddSub = (e) => {
                 e.preventDefault();
                 setSubstitutions([...substitutions, { ...newSub, status: 'Pendente' }]);
                 setIsSubModalOpen(false);
                 setNewSub({ data: '', turmaId: '', instrutorAusente: '', instrutorSubstituto: '', motivo: '', status: 'Pendente' });
+                alert("Substituição agendada!");
             };
 
-            const handleExport = () => {
-                const wb = XLSX.utils.book_new();
-                const headers = ['Turma', 'Curso', 'Analista', 'Alunos', 'Início', 'Término', 'Instrutor 1', 'Instrutor 2', 'Data Transferência', 'Resp. Atual', 'Status'];
-                const exportRows = data.map(row => {
-                    const today = new Date(); today.setHours(0,0,0,0);
-                    let currInst = row.instrutor1;
-                    let st = 'Ativo';
-                    try {
-                        if (row.termino) { const t = new Date(row.termino+'T00:00:00'); if (!isNaN(t) && today > t) st = 'Concluída'; }
-                        if (st !== 'Concluída' && row.instrutor2 && row.dataTransferencia) {
-                            const tf = new Date(row.dataTransferencia+'T00:00:00');
-                            if (!isNaN(tf) && today >= tf) currInst = row.instrutor2;
-                        }
-                    } catch(e) {}
-                    return [row.id, row.curso, row.analista, row.alunos, row.inicio, row.termino, row.instrutor1, row.instrutor2, row.dataTransferencia, currInst, st];
+            // Simulador
+            const handleSimulate = () => {
+                if (!simData.curso || !simData.alunos) return;
+                const scores = instructorStats.map(inst => {
+                    const loadScore = inst.totalAlunos * 1; 
+                    const classScore = inst.totalTurmas * 15; 
+                    const courseRepetitionScore = (inst.cursos[simData.curso] || 0) * 50; 
+                    return {
+                        ...inst,
+                        score: loadScore + classScore + courseRepetitionScore,
+                        projectedAlunos: inst.totalAlunos + parseInt(simData.alunos),
+                        currentCourseCount: inst.cursos[simData.curso] || 0
+                    };
                 });
-                const wsData = [headers, ...exportRows];
-                const ws = XLSX.utils.aoa_to_sheet(wsData);
-                XLSX.utils.book_append_sheet(wb, ws, "Base de Turmas");
-
-                const subHeaders = ['Data', 'Turma ID', 'Instrutor Ausente', 'Instrutor Substituto', 'Motivo', 'Status'];
-                const subExportRows = substitutions.map(s => [s.data, s.turmaId, s.instrutorAusente, s.instrutorSubstituto, s.motivo, s.status]);
-                const wsSubData = [subHeaders, ...subExportRows];
-                const wsSub = XLSX.utils.aoa_to_sheet(wsSubData);
-                XLSX.utils.book_append_sheet(wb, wsSub, "Substituicoes");
-
-                XLSX.writeFile(wb, "Senac_Gestao_Turmas.xlsx");
+                setRecommendations(scores.sort((a, b) => a.score - b.score));
+            };
+            const acceptSuggestion = (instrutorNome) => {
+                setNewClass(prev => ({ ...prev, curso: simData.curso, alunos: simData.alunos, instrutor1: instrutorNome }));
+                setIsFormOpen(true);
             };
 
-            // --- COMPONENTES ---
+
+            // --- COMPONENTES VISUAIS ---
             const Charts = () => {
-                if (!window.Recharts) return null;
+                if (!window.Recharts) return <div className="p-4 bg-gray-100 rounded text-center">Carregando gráficos...</div>;
                 const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } = window.Recharts;
+                
+                // Prepara dados seguros para gráfico (sem NaN)
                 const chartStats = useMemo(() => {
                     const stats = {};
                     filteredData.forEach(row => {
                         if (row.isFinished || row.instrutorAtual === 'Não Atribuído') return;
                         const inst = row.instrutorAtual;
                         if (!stats[inst]) stats[inst] = { nome: inst, totalAlunos: 0, totalTurmas: 0 };
-                        stats[inst].totalAlunos += parseInt(row.alunos || 0);
+                        // Garante numérico
+                        stats[inst].totalAlunos += (parseInt(row.alunos) || 0);
                         stats[inst].totalTurmas += 1;
                     });
                     return Object.values(stats).sort((a,b) => b.totalAlunos - a.totalAlunos);
@@ -466,49 +497,50 @@
                             
                             <div className="flex gap-2">
                                 <button onClick={() => setIsSubModalOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 transition text-sm font-semibold shadow-sm">
-                                    <Icons.Switch /> Registrar Substituição
+                                    <Icons.Switch /> Substituir
                                 </button>
                                 <button onClick={() => setIsFormOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition text-sm font-semibold shadow-sm">
-                                    <Icons.Plus /> Nova Turma
+                                    <Icons.Plus /> Turma
                                 </button>
                                 <button onClick={handleExport} className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition text-sm font-semibold shadow-sm">
-                                    <Icons.Download /> Salvar Excel
+                                    <Icons.Download /> Salvar
                                 </button>
                                 <button onClick={() => fileInputRef.current.click()} className="flex items-center gap-2 px-4 py-2 bg-orange-50 text-orange-700 rounded-lg hover:bg-orange-100 transition text-sm font-semibold shadow-sm">
-                                    <Icons.Upload /> Carregar Excel
+                                    <Icons.Upload /> Carregar
                                 </button>
                             </div>
                         </div>
                     </nav>
 
                     <main className="max-w-7xl mx-auto px-4 py-8">
-                        {/* ALERTA DE SUBSTITUIÇÃO URGENTE */}
+                        {/* PAINEL DE ALERTA: Substituições Próximas */}
                         {urgentSubs.length > 0 && (
-                            <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-8 rounded shadow-lg fade-in alert-pulse">
+                            <div className="bg-white border-l-4 border-red-500 p-4 mb-8 rounded-lg shadow-lg fade-in alert-pulse ring-1 ring-red-100">
                                 <div className="flex justify-between items-start">
                                     <div>
                                         <h3 className="font-bold text-red-800 text-lg flex items-center gap-2">
-                                            <Icons.Clock /> Atenção! Substituições Próximas (24h)
+                                            <Icons.Clock /> Substituições para Hoje/Amanhã
                                         </h3>
-                                        <p className="text-red-600 text-sm mb-2">Confirme a realização das trocas abaixo para registrar no sistema.</p>
+                                        <p className="text-red-600 text-sm">Confirme as trocas para efetivar no sistema.</p>
                                     </div>
                                 </div>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-3">
                                     {urgentSubs.map((sub, idx) => (
-                                        <div key={idx} className="bg-white p-3 rounded shadow flex justify-between items-center border border-red-100">
-                                            <div>
-                                                <div className="font-bold text-gray-800">Turma {sub.turmaId} - {sub.data}</div>
-                                                <div className="text-sm">
-                                                    <span className="text-red-500 font-semibold">{sub.instrutorAusente}</span>
-                                                    <span className="mx-1">➔</span>
-                                                    <span className="text-green-600 font-bold">{sub.instrutorSubstituto}</span>
-                                                </div>
+                                        <div key={idx} className="bg-red-50 p-3 rounded border border-red-200 flex flex-col gap-2">
+                                            <div className="flex justify-between items-center text-sm font-bold text-gray-700">
+                                                <span>{sub.data}</span>
+                                                <span className="bg-white px-2 rounded text-xs border">Turma {sub.turmaId}</span>
+                                            </div>
+                                            <div className="flex items-center justify-between text-sm">
+                                                <span className="text-red-600 font-semibold">{sub.instrutorAusente}</span>
+                                                <span className="text-gray-400">➔</span>
+                                                <span className="text-green-700 font-bold">{sub.instrutorSubstituto}</span>
                                             </div>
                                             <button 
-                                                onClick={() => confirmSubstitution(idx, sub)}
-                                                className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded text-sm font-bold shadow transition"
+                                                onClick={() => confirmSubstitution(sub)}
+                                                className="mt-1 w-full bg-green-600 hover:bg-green-700 text-white py-1.5 rounded text-sm font-bold shadow transition flex justify-center gap-2"
                                             >
-                                                Confirmar Troca
+                                                <Icons.Check /> Confirmar Troca
                                             </button>
                                         </div>
                                     ))}
@@ -517,14 +549,14 @@
                         )}
 
                         {/* Abas */}
-                        <div className="flex space-x-4 mb-6 border-b border-gray-200">
-                            <button onClick={() => setActiveTab('dashboard')} className={`py-2 px-4 font-semibold border-b-2 transition ${activeTab === 'dashboard' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                        <div className="flex space-x-4 mb-6 border-b border-gray-200 overflow-x-auto">
+                            <button onClick={() => setActiveTab('dashboard')} className={`py-2 px-4 font-semibold border-b-2 transition whitespace-nowrap ${activeTab === 'dashboard' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
                                 Visão Geral
                             </button>
-                            <button onClick={() => setActiveTab('simulator')} className={`py-2 px-4 font-semibold border-b-2 transition ${activeTab === 'simulator' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                            <button onClick={() => setActiveTab('simulator')} className={`py-2 px-4 font-semibold border-b-2 transition whitespace-nowrap ${activeTab === 'simulator' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
                                 Simulador de Distribuição
                             </button>
-                            <button onClick={() => setActiveTab('subs')} className={`py-2 px-4 font-semibold border-b-2 transition ${activeTab === 'subs' ? 'border-purple-500 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                            <button onClick={() => setActiveTab('subs')} className={`py-2 px-4 font-semibold border-b-2 transition whitespace-nowrap ${activeTab === 'subs' ? 'border-purple-500 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
                                 Histórico de Substituições ({substitutions.length})
                             </button>
                         </div>
@@ -535,33 +567,27 @@
                                 <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-8 flex flex-col md:flex-row gap-4 items-end">
                                     <div className="flex-1 w-full">
                                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Filtrar por Instrutor</label>
-                                        <div className="relative">
-                                            <select 
-                                                value={filters.instrutor} 
-                                                onChange={e => setFilters({...filters, instrutor: e.target.value})}
-                                                className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
-                                            >
-                                                <option value="">Todos os Instrutores</option>
-                                                {uniqueInstrutores.map(i => <option key={i} value={i}>{i}</option>)}
-                                            </select>
-                                            <div className="absolute left-3 top-2.5 text-gray-400"><Icons.Filter /></div>
-                                        </div>
+                                        <select 
+                                            value={filters.instrutor} 
+                                            onChange={e => setFilters({...filters, instrutor: e.target.value})}
+                                            className="w-full p-2 bg-gray-50 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                        >
+                                            <option value="">Todos os Instrutores</option>
+                                            {uniqueInstrutores.map(i => <option key={i} value={i}>{i}</option>)}
+                                        </select>
                                     </div>
                                     <div className="flex-1 w-full">
                                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Filtrar por Analista</label>
-                                        <div className="relative">
-                                            <select 
-                                                value={filters.analista} 
-                                                onChange={e => setFilters({...filters, analista: e.target.value})}
-                                                className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
-                                            >
-                                                <option value="">Todos os Analistas</option>
-                                                {uniqueAnalistas.map(a => <option key={a} value={a}>{a}</option>)}
-                                            </select>
-                                            <div className="absolute left-3 top-2.5 text-gray-400"><Icons.Filter /></div>
-                                        </div>
+                                        <select 
+                                            value={filters.analista} 
+                                            onChange={e => setFilters({...filters, analista: e.target.value})}
+                                            className="w-full p-2 bg-gray-50 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                        >
+                                            <option value="">Todos os Analistas</option>
+                                            {uniqueAnalistas.map(a => <option key={a} value={a}>{a}</option>)}
+                                        </select>
                                     </div>
-                                    <div className="pb-1 text-sm text-gray-400">
+                                    <div className="pb-2 text-sm text-gray-400 font-mono">
                                         {filteredData.length} registros
                                     </div>
                                 </div>
