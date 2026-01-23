@@ -1,560 +1,495 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { 
-  Users, 
-  BookOpen, 
-  Calendar, 
-  ArrowRightLeft, 
-  BarChart3, 
-  CheckCircle, 
-  Upload,
-  Search,
-  School,
-  FileSpreadsheet,
-  AlertCircle
-} from 'lucide-react';
-import { 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  Legend, 
-  ResponsiveContainer, 
-  PieChart, 
-  Pie, 
-  Cell 
-} from 'recharts';
-
-// --- CONFIGURAÇÃO DE ESTILO E CORES SENAC ---
-const COLORS = {
-  primary: '#004587', // Azul Senac
-  secondary: '#F68B1F', // Laranja Senac
-  accent: '#00A4E0', // Azul Claro
-  background: '#F4F6F8',
-  white: '#FFFFFF',
-  text: '#333333',
-  success: '#10B981',
-  chart: ['#004587', '#F68B1F', '#00A4E0', '#FFBB00', '#2E2E2E', '#8884d8']
-};
-
-const SenacLogo = () => (
-  <div className="flex items-center gap-2 mb-6">
-    <div className="bg-white p-2 rounded-lg shadow-sm border-l-4 border-orange-500">
-      <h1 className="text-2xl font-bold text-blue-900 tracking-tight">Senac <span className="text-orange-500">Portão</span></h1>
-      <p className="text-xs text-gray-500 font-medium tracking-widest uppercase">Distribuição de Turmas</p>
-    </div>
-  </div>
-);
-
-// --- DADOS INICIAIS (MOCK) ---
-const MOCK_DATA = [
-  { id: '202500029', curso: 'Administrativo', analista: 'Bianca', alunos: 31, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Sheila', instrutor2: 'Bruna', dataTransferencia: '2026-02-04' },
-  { id: '202500118', curso: 'Administrativo', analista: 'Bianca', alunos: 31, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Bruna', instrutor2: 'Jaqueline', dataTransferencia: '2026-02-04' },
-  { id: '202500119', curso: 'Administrativo', analista: 'Bruna', alunos: 26, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Jaqueline', instrutor2: 'Tatiane', dataTransferencia: '2026-02-04' },
-  { id: '202500030', curso: 'Vendas', analista: 'Bruna', alunos: 32, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Bruna', instrutor2: 'Katia', dataTransferencia: '2026-02-04' },
-  { id: '202501228', curso: 'Supermercado', analista: 'Bianca', alunos: 28, inicio: '2025-12-02', termino: '2026-12-01', instrutor1: 'Luciano', instrutor2: 'Claire', dataTransferencia: '2026-02-04' },
-  { id: '202500848', curso: 'Administrativo', analista: 'Bianca', alunos: 11, inicio: '2025-12-02', termino: '2026-12-01', instrutor1: 'Jean', instrutor2: 'Juliana', dataTransferencia: '2026-02-04' },
-  { id: '202500849', curso: 'Supermercado', analista: 'Mariana', alunos: 33, inicio: '2025-12-02', termino: '2026-12-01', instrutor1: 'Bruna', instrutor2: 'Luciano', dataTransferencia: '2026-02-04' },
-  { id: '202500999', curso: 'Vendas', analista: 'Mariana', alunos: 25, inicio: '2025-01-10', termino: '2026-01-10', instrutor1: 'Sheila', instrutor2: '', dataTransferencia: '' },
-  { id: '202501000', curso: 'Administrativo', analista: 'Bianca', alunos: 30, inicio: '2025-03-01', termino: '2026-03-01', instrutor1: 'Tatiane', instrutor2: '', dataTransferencia: '' },
-];
-
-export default function App() {
-  const [data, setData] = useState(MOCK_DATA);
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [newClassCourse, setNewClassCourse] = useState('Administrativo');
-  const [newClassStudents, setNewClassStudents] = useState(30);
-  const [recommendation, setRecommendation] = useState(null);
-  const [uploadError, setUploadError] = useState(null);
-  const fileInputRef = useRef(null);
-
-  // --- LÓGICA DE UPLOAD E PARSE CSV ---
-  const handleFileUpload = (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Senac Portão - Distribuição de Turmas</title>
     
-    reader.onload = (e) => {
-      try {
-        const text = e.target.result;
-        const lines = text.split('\n');
-        
-        // Remove cabeçalho e linhas vazias
-        const cleanLines = lines.slice(1).filter(line => line.trim() !== '');
-        
-        const parsedData = cleanLines.map((line, index) => {
-          // Separa por vírgula (CSV simples)
-          // Nota: Para CSVs complexos com vírgulas dentro de aspas, seria necessário um parser mais robusto (ex: PapaParse).
-          // Assumindo estrutura simples conforme mock.
-          const cols = line.split(',');
-
-          // Mapeamento baseado no CSV/Prompt
-          // A=0: Turma/ID
-          // B=1: Curso
-          // C=2: Analista
-          // D=3: Alunos
-          // E=4: Início
-          // F=5: Término
-          // G=6: Instrutor 1
-          // H=7: Instrutor 2 
-          // I=8: Data Transferência (As vezes pode ser 'OK', filtrar)
-          
-          const rawDate = cols[8] ? cols[8].trim() : '';
-          // Validação simples de data YYYY-MM-DD
-          const isValidDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate);
-          
-          return {
-            id: cols[0]?.trim() || `CSV-${index}`,
-            curso: cols[1]?.trim() || 'Desconhecido',
-            analista: cols[2]?.trim(),
-            alunos: parseInt(cols[3]?.trim()) || 0,
-            inicio: cols[4]?.trim(),
-            termino: cols[5]?.trim(),
-            instrutor1: cols[6]?.trim(),
-            instrutor2: cols[7]?.trim(),
-            dataTransferencia: isValidDate ? rawDate : ''
-          };
-        });
-
-        setData(parsedData);
-        setUploadError(null);
-        setActiveTab('list'); // Vai para a lista para confirmar importação
-      } catch (err) {
-        console.error("Erro ao processar CSV:", err);
-        setUploadError("Erro ao ler o arquivo. Verifique se é um CSV válido separado por vírgulas.");
-      }
-    };
-
-    reader.readAsText(file);
-    // Resetar input para permitir re-upload do mesmo arquivo
-    event.target.value = null; 
-  };
-
-  const triggerUpload = () => {
-    fileInputRef.current.click();
-  };
-
-  // --- LÓGICA DE PROCESSAMENTO ---
-  const processedData = useMemo(() => {
-    const today = new Date();
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
     
-    return data.map(row => {
-      let currentInstructor = row.instrutor1;
-      let status = 'Inicial';
+    <!-- IMPORTANTE: A ordem dos scripts abaixo é fundamental para evitar erros -->
+    <!-- 1. React e ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    
+    <!-- 2. Prop-types (Obrigatório para o Recharts funcionar neste modo) -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    
+    <!-- 3. Recharts (Gráficos) -->
+    <script src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
+    
+    <!-- 4. Babel (Compilador JSX) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-      if (row.instrutor2 && row.dataTransferencia) {
-        // Tenta criar data. Se falhar, ignora.
-        const transferDate = new Date(row.dataTransferencia);
-        if (!isNaN(transferDate.getTime())) {
-           if (today >= transferDate) {
-            currentInstructor = row.instrutor2;
-            status = 'Transferido';
-          }
-        }
-      }
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; }
+        .fade-in { animation: fadeIn 0.5s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
 
-      return {
-        ...row,
-        instrutorAtual: currentInstructor || 'Não Atribuído',
-        statusTransferencia: status
-      };
-    });
-  }, [data]);
+    <script type="text/babel">
+        // Garante que as bibliotecas carregaram
+        const { useState, useEffect, useMemo, useRef } = React;
+        const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } = Recharts;
 
-  // Agrupa estatísticas por Instrutor
-  const instructorStats = useMemo(() => {
-    const stats = {};
-
-    processedData.forEach(row => {
-      const instrutor = row.instrutorAtual;
-      if (!instrutor || instrutor === 'Não Atribuído') return;
-
-      if (!stats[instrutor]) {
-        stats[instrutor] = {
-          nome: instrutor,
-          totalAlunos: 0,
-          totalTurmas: 0,
-          cursos: {}
+        // --- ÍCONES SVG ---
+        const Icons = {
+            Users: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+            BookOpen: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>,
+            School: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m4 6 8-4 8 4"/><path d="m18 10 4 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8l4-2"/><path d="M14 22v-4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v4"/><path d="M18 5v17"/><path d="M6 5v17"/></svg>,
+            Upload: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
+            Search: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>,
+            CheckCircle: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
+            ArrowRightLeft: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></svg>,
+            BarChart3: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>,
+            FileSpreadsheet: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h2"/><path d="M8 17h2"/><path d="M14 13h2"/><path d="M14 17h2"/></svg>,
+            AlertCircle: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
         };
-      }
 
-      stats[instrutor].totalAlunos += parseInt(row.alunos || 0);
-      stats[instrutor].totalTurmas += 1;
-      
-      const cursoTipo = row.curso || 'Outros';
-      stats[instrutor].cursos[cursoTipo] = (stats[instrutor].cursos[cursoTipo] || 0) + 1;
-    });
+        const COLORS = {
+            primary: '#004587',
+            secondary: '#F68B1F',
+            accent: '#00A4E0',
+            chart: ['#004587', '#F68B1F', '#00A4E0', '#FFBB00', '#2E2E2E', '#8884d8']
+        };
 
-    return Object.values(stats);
-  }, [processedData]);
+        // --- DADOS MOCK (Exemplo) ---
+        const MOCK_DATA = [
+            { id: '202500029', curso: 'Administrativo', analista: 'Bianca', alunos: 31, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Sheila', instrutor2: 'Bruna', dataTransferencia: '2026-02-04' },
+            { id: '202500118', curso: 'Administrativo', analista: 'Bianca', alunos: 31, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Bruna', instrutor2: 'Jaqueline', dataTransferencia: '2026-02-04' },
+            { id: '202501228', curso: 'Supermercado', analista: 'Bianca', alunos: 28, inicio: '2025-12-02', termino: '2026-12-01', instrutor1: 'Luciano', instrutor2: 'Claire', dataTransferencia: '2026-02-04' }
+        ];
 
-  // --- SIMULAÇÃO ---
-  const handleSimulate = () => {
-    const scores = instructorStats.map(inst => {
-      const loadScore = inst.totalAlunos * 1;
-      const classScore = inst.totalTurmas * 20;
-      const courseRepetitionScore = (inst.cursos[newClassCourse] || 0) * 100;
+        function App() {
+            const [data, setData] = useState(MOCK_DATA);
+            const [activeTab, setActiveTab] = useState('dashboard');
+            const [newClassCourse, setNewClassCourse] = useState('Administrativo');
+            const [newClassStudents, setNewClassStudents] = useState(30);
+            const [recommendation, setRecommendation] = useState(null);
+            const [uploadError, setUploadError] = useState(null);
+            const fileInputRef = useRef(null);
+            const [isMockData, setIsMockData] = useState(true);
 
-      return {
-        ...inst,
-        score: loadScore + classScore + courseRepetitionScore,
-        details: {
-          alunos: inst.totalAlunos,
-          turmas: inst.totalTurmas,
-          mesmoCurso: inst.cursos[newClassCourse] || 0
-        }
-      };
-    });
+            // --- LÓGICA DE UPLOAD ---
+            const handleFileUpload = (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
 
-    scores.sort((a, b) => a.score - b.score);
-    setRecommendation(scores);
-  };
-
-  // --- UI COMPONENTS ---
-  const StatCard = ({ title, value, icon: Icon, color }) => (
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
-      <div>
-        <p className="text-gray-500 text-sm font-medium mb-1">{title}</p>
-        <h3 className="text-3xl font-bold text-gray-800">{value}</h3>
-      </div>
-      <div className={`p-3 rounded-full ${color}`}>
-        <Icon size={24} className="text-white" />
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="min-h-screen bg-gray-50 font-sans text-gray-800 pb-10">
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        onChange={handleFileUpload} 
-        accept=".csv,.txt" 
-        className="hidden" 
-      />
-
-      {/* HEADER */}
-      <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
-          <SenacLogo />
-          
-          <nav className="flex items-center space-x-2 lg:space-x-4">
-            <button 
-              onClick={() => setActiveTab('dashboard')}
-              className={`px-3 lg:px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'dashboard' ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              Dashboard
-            </button>
-            <button 
-              onClick={() => setActiveTab('simulator')}
-              className={`px-3 lg:px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'simulator' ? 'bg-orange-50 text-orange-700 border border-orange-200' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              Distribuir
-            </button>
-            <button 
-              onClick={() => setActiveTab('list')}
-              className={`px-3 lg:px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'list' ? 'bg-gray-100 text-gray-700 border border-gray-200' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              Lista
-            </button>
-            
-            <div className="h-6 w-px bg-gray-300 mx-2"></div>
-
-            <button 
-              onClick={triggerUpload}
-              className="px-3 lg:px-4 py-2 rounded-md text-sm font-medium bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 transition-colors flex items-center gap-2"
-              title="Carregar planilha CSV"
-            >
-              <Upload size={16} />
-              <span className="hidden lg:inline">Upload CSV</span>
-            </button>
-          </nav>
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
-        {uploadError && (
-          <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center gap-2">
-            <AlertCircle size={20} />
-            {uploadError}
-          </div>
-        )}
-
-        {/* VIEW: DASHBOARD */}
-        {activeTab === 'dashboard' && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <StatCard 
-                title="Total de Alunos" 
-                value={processedData.reduce((acc, curr) => acc + parseInt(curr.alunos || 0), 0)} 
-                icon={Users} 
-                color="bg-blue-600" 
-              />
-              <StatCard 
-                title="Turmas Ativas" 
-                value={processedData.length} 
-                icon={BookOpen} 
-                color="bg-orange-500" 
-              />
-              <StatCard 
-                title="Instrutores Ativos" 
-                value={instructorStats.length} 
-                icon={School} 
-                color="bg-cyan-500" 
-              />
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Gráfico de Alunos por Instrutor */}
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-                  <BarChart3 className="text-blue-600" size={20} />
-                  Carga Total de Alunos por Instrutor
-                </h3>
-                <div className="h-80 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={instructorStats} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
-                      <XAxis type="number" />
-                      <YAxis dataKey="nome" type="category" width={80} tick={{fontSize: 12}} />
-                      <Tooltip 
-                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
-                        cursor={{fill: '#f4f6f8'}}
-                      />
-                      <Bar dataKey="totalAlunos" fill={COLORS.primary} radius={[0, 4, 4, 0]} name="Total Alunos">
-                        {instructorStats.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={index % 2 === 0 ? COLORS.primary : COLORS.secondary} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              {/* Gráfico de Turmas por Instrutor */}
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-                  <PieChart className="text-orange-500" size={20} />
-                  Distribuição de Turmas (Qtd)
-                </h3>
-                <div className="h-80 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={instructorStats}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="nome" tick={{fontSize: 12}} />
-                      <YAxis allowDecimals={false} />
-                      <Tooltip />
-                      <Bar dataKey="totalTurmas" fill={COLORS.accent} radius={[4, 4, 0, 0]} name="Qtd Turmas" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </div>
-
-            {/* Detalhamento de Cursos por Instrutor */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-              <h3 className="text-lg font-bold text-gray-800 mb-6">Detalhamento: Mix de Cursos por Instrutor</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {instructorStats.map((inst) => (
-                  <div key={inst.nome} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
-                    <div className="flex justify-between items-center mb-3">
-                      <h4 className="font-bold text-blue-900">{inst.nome}</h4>
-                      <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">{inst.totalAlunos} alunos</span>
-                    </div>
-                    <div className="space-y-2">
-                      {Object.entries(inst.cursos).map(([curso, qtd]) => (
-                        <div key={curso} className="flex justify-between text-sm items-center">
-                          <span className="text-gray-600">{curso}</span>
-                          <div className="flex items-center gap-2">
-                            <div className="w-24 h-2 bg-gray-100 rounded-full overflow-hidden">
-                              <div 
-                                className="h-full bg-orange-400 rounded-full" 
-                                style={{ width: `${(qtd / inst.totalTurmas) * 100}%` }}
-                              ></div>
-                            </div>
-                            <span className="font-semibold text-gray-700">{qtd}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* VIEW: SIMULATOR */}
-        {activeTab === 'simulator' && (
-          <div className="max-w-4xl mx-auto space-y-8">
-            <div className="bg-gradient-to-r from-blue-900 to-blue-800 text-white p-8 rounded-2xl shadow-lg">
-              <h2 className="text-2xl font-bold mb-2">Simulador de Distribuição Inteligente</h2>
-              <p className="text-blue-200 mb-6">Insira os dados da nova turma para encontrar o instrutor ideal com base no equilíbrio de carga.</p>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
-                <div>
-                  <label className="block text-sm font-medium text-blue-100 mb-1">Nome do Curso</label>
-                  <select 
-                    value={newClassCourse}
-                    onChange={(e) => setNewClassCourse(e.target.value)}
-                    className="w-full bg-white/10 border border-blue-400 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-400 option:text-gray-800"
-                  >
-                    {['Administrativo', 'Vendas', 'Supermercado', 'Informática', 'Logística'].map(c => (
-                      <option key={c} value={c} className="text-gray-800">{c}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-blue-100 mb-1">Total de Alunos</label>
-                  <input 
-                    type="number"
-                    value={newClassStudents}
-                    onChange={(e) => setNewClassStudents(Number(e.target.value))}
-                    className="w-full bg-white/10 border border-blue-400 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-400"
-                  />
-                </div>
-              </div>
-              
-              <button 
-                onClick={handleSimulate}
-                className="mt-6 w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
-              >
-                <Search size={20} />
-                Encontrar Melhor Instrutor
-              </button>
-            </div>
-
-            {recommendation && (
-              <div className="space-y-4 animate-fade-in">
-                <h3 className="text-xl font-bold text-gray-800">Resultado da Análise</h3>
+                const reader = new FileReader();
                 
-                {/* Melhor Opção */}
-                <div className="bg-white border-l-4 border-green-500 rounded-lg shadow-md p-6 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 p-4 opacity-10">
-                    <CheckCircle size={100} className="text-green-500" />
-                  </div>
-                  <div className="relative z-10">
-                    <p className="text-sm text-green-600 font-bold uppercase tracking-wider mb-1">Recomendação Principal</p>
-                    <h2 className="text-3xl font-bold text-gray-800 mb-2">{recommendation[0].nome}</h2>
-                    <p className="text-gray-600 max-w-lg mb-4">
-                      Este instrutor é o mais indicado pois possui a menor combinação de carga horária e variedade deste curso específico.
-                    </p>
-                    <div className="flex gap-4 text-sm">
-                      <div className="bg-gray-100 px-3 py-1 rounded">
-                        <span className="block text-gray-500 text-xs">Carga Atual</span>
-                        <span className="font-bold">{recommendation[0].details.alunos} Alunos</span>
-                      </div>
-                      <div className="bg-gray-100 px-3 py-1 rounded">
-                        <span className="block text-gray-500 text-xs">Turmas Ativas</span>
-                        <span className="font-bold">{recommendation[0].details.turmas}</span>
-                      </div>
-                      <div className="bg-gray-100 px-3 py-1 rounded">
-                        <span className="block text-gray-500 text-xs">Turmas de {newClassCourse}</span>
-                        <span className="font-bold">{recommendation[0].details.mesmoCurso}</span>
-                      </div>
+                reader.onload = (e) => {
+                    try {
+                        const text = e.target.result;
+                        const lines = text.split(/\r\n|\n/);
+                        const cleanData = [];
+                        
+                        for (let i = 1; i < lines.length; i++) {
+                            const line = lines[i].trim();
+                            if (!line) continue;
+
+                            const cols = line.split(',');
+                            
+                            // Verifica se há dados suficientes (mínimo Coluna A)
+                            if (cols.length > 0 && cols[0].trim() !== '') {
+                                
+                                // Tratamento Data Transferência (Coluna I = Index 8)
+                                let rawDate = cols[8] ? cols[8].trim() : '';
+                                
+                                // Converte formato DD/MM/YYYY para YYYY-MM-DD se necessário
+                                if (rawDate.includes('/')) {
+                                    const parts = rawDate.split('/');
+                                    if (parts.length === 3) {
+                                        rawDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+                                    }
+                                }
+                                
+                                // Validação simples de data
+                                const isValidDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate);
+
+                                cleanData.push({
+                                    id: cols[0]?.trim(),
+                                    curso: cols[1]?.trim() || 'Curso Desconhecido',
+                                    analista: cols[2]?.trim(),
+                                    alunos: parseInt(cols[3]?.trim()) || 0,
+                                    inicio: cols[4]?.trim(),
+                                    termino: cols[5]?.trim(),
+                                    instrutor1: cols[6]?.trim(),
+                                    instrutor2: cols[7]?.trim(),
+                                    dataTransferencia: isValidDate ? rawDate : ''
+                                });
+                            }
+                        }
+
+                        if (cleanData.length === 0) {
+                            throw new Error("Não foi possível ler os dados.");
+                        }
+
+                        setData(cleanData);
+                        setIsMockData(false);
+                        setUploadError(null);
+                        setActiveTab('list'); 
+                    } catch (err) {
+                        console.error("Erro CSV:", err);
+                        setUploadError("Erro ao processar o arquivo. Verifique se é um CSV válido.");
+                    }
+                };
+
+                reader.readAsText(file);
+                event.target.value = null; 
+            };
+
+            // --- PROCESSAMENTO DOS DADOS ---
+            const processedData = useMemo(() => {
+                const today = new Date();
+                
+                return data.map(row => {
+                    let currentInstructor = row.instrutor1;
+                    let status = 'Inicial';
+
+                    if (row.instrutor2 && row.dataTransferencia) {
+                        // Força interpretação da data local (adiciona hora para evitar problema de fuso UTC)
+                        const transferDate = new Date(row.dataTransferencia + 'T00:00:00'); 
+                        
+                        if (!isNaN(transferDate.getTime())) {
+                            if (today >= transferDate) {
+                                currentInstructor = row.instrutor2;
+                                status = 'Transferido';
+                            }
+                        }
+                    }
+
+                    if (!currentInstructor || currentInstructor.trim() === '') {
+                        currentInstructor = 'Não Atribuído';
+                    }
+
+                    return {
+                        ...row,
+                        instrutorAtual: currentInstructor,
+                        statusTransferencia: status
+                    };
+                });
+            }, [data]);
+
+            // --- ESTATÍSTICAS DO DASHBOARD ---
+            const instructorStats = useMemo(() => {
+                const stats = {};
+
+                processedData.forEach(row => {
+                    const instrutor = row.instrutorAtual;
+                    if (instrutor === 'Não Atribuído') return;
+
+                    if (!stats[instrutor]) {
+                        stats[instrutor] = {
+                            nome: instrutor,
+                            totalAlunos: 0,
+                            totalTurmas: 0,
+                            cursos: {}
+                        };
+                    }
+
+                    stats[instrutor].totalAlunos += parseInt(row.alunos || 0);
+                    stats[instrutor].totalTurmas += 1;
+                    
+                    const cursoTipo = row.curso || 'Outros';
+                    stats[instrutor].cursos[cursoTipo] = (stats[instrutor].cursos[cursoTipo] || 0) + 1;
+                });
+
+                return Object.values(stats).sort((a,b) => b.totalAlunos - a.totalAlunos);
+            }, [processedData]);
+
+            // --- LÓGICA DO ROBÔ (DISTRIBUIÇÃO) ---
+            const handleSimulate = () => {
+                const scores = instructorStats.map(inst => {
+                    const loadScore = inst.totalAlunos * 1; 
+                    const classScore = inst.totalTurmas * 15; 
+                    const courseRepetitionScore = (inst.cursos[newClassCourse] || 0) * 50; 
+
+                    return {
+                        ...inst,
+                        score: loadScore + classScore + courseRepetitionScore,
+                        details: {
+                            alunos: inst.totalAlunos,
+                            turmas: inst.totalTurmas,
+                            mesmoCurso: inst.cursos[newClassCourse] || 0
+                        }
+                    };
+                });
+
+                scores.sort((a, b) => a.score - b.score);
+                setRecommendation(scores);
+            };
+
+            const StatCard = ({ title, value, icon: IconComponent, color }) => (
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
+                    <div>
+                        <p className="text-gray-500 text-sm font-medium mb-1">{title}</p>
+                        <h3 className="text-3xl font-bold text-gray-800">{value}</h3>
                     </div>
-                  </div>
+                    <div className={`p-3 rounded-full text-white ${color}`}>
+                        <IconComponent />
+                    </div>
                 </div>
+            );
 
-                {/* Outras Opções */}
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="bg-gray-50 px-6 py-3 border-b border-gray-200">
-                    <h4 className="font-semibold text-gray-700">Ranking Completo de Disponibilidade</h4>
-                  </div>
-                  <div className="divide-y divide-gray-100">
-                    {recommendation.slice(1).map((inst, idx) => (
-                      <div key={inst.nome} className="px-6 py-4 flex items-center justify-between hover:bg-gray-50">
-                        <div className="flex items-center gap-4">
-                          <span className="text-gray-400 font-mono text-lg w-6">#{idx + 2}</span>
-                          <div>
-                            <p className="font-medium text-gray-800">{inst.nome}</p>
-                            <p className="text-xs text-gray-500">
-                              {inst.details.alunos} alunos • {inst.details.mesmoCurso} turmas de {newClassCourse}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <span className={`text-xs px-2 py-1 rounded-full ${inst.details.mesmoCurso > 1 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-                            {inst.details.mesmoCurso > 1 ? 'Muitas turmas iguais' : 'Carga Equilibrada'}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+            return (
+                <div className="min-h-screen pb-10">
+                    <input 
+                        type="file" 
+                        ref={fileInputRef} 
+                        onChange={handleFileUpload} 
+                        accept=".csv,.txt" 
+                        className="hidden" 
+                    />
 
-        {/* VIEW: LISTA */}
-        {activeTab === 'list' && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="p-6 border-b border-gray-200 flex justify-between items-center">
-              <h3 className="font-bold text-gray-800 text-lg">Base de Dados Completa</h3>
-              <div className="flex gap-2 items-center">
-                 <div className="text-xs text-gray-500 bg-yellow-50 px-3 py-1 rounded-full border border-yellow-200">
-                  Total de Registros: {processedData.length}
+                    {/* Navbar */}
+                    <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-20">
+                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <div className="bg-white p-2 rounded-lg border-l-4 border-orange-500">
+                                    <h1 className="text-2xl font-bold text-blue-900 tracking-tight">Senac <span className="text-orange-500">Portão</span></h1>
+                                    <p className="text-xs text-gray-500 font-medium tracking-widest uppercase">Distribuição de Turmas</p>
+                                </div>
+                            </div>
+                            
+                            <nav className="flex items-center space-x-2 md:space-x-4">
+                                <button onClick={() => setActiveTab('dashboard')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'dashboard' ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'text-gray-500 hover:text-gray-700'}`}>Dashboard</button>
+                                <button onClick={() => setActiveTab('simulator')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'simulator' ? 'bg-orange-50 text-orange-700 border border-orange-200' : 'text-gray-500 hover:text-gray-700'}`}>Distribuir</button>
+                                <button onClick={() => setActiveTab('list')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'list' ? 'bg-gray-100 text-gray-700 border border-gray-200' : 'text-gray-500 hover:text-gray-700'}`}>Lista</button>
+                                <div className="h-6 w-px bg-gray-300 mx-2"></div>
+                                <button onClick={() => fileInputRef.current.click()} className="px-3 py-2 rounded-md text-sm font-medium bg-green-600 text-white hover:bg-green-700 shadow-sm transition-colors flex items-center gap-2">
+                                    <Icons.Upload /> <span>Importar CSV</span>
+                                </button>
+                            </nav>
+                        </div>
+                    </header>
+
+                    <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                        
+                        {isMockData && (
+                            <div className="mb-6 bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg flex items-center gap-2 text-sm">
+                                <Icons.AlertCircle />
+                                <span><strong>Modo Demonstração:</strong> Dados de exemplo carregados. Clique em "Importar CSV" para carregar suas 77 turmas.</span>
+                            </div>
+                        )}
+
+                        {uploadError && (
+                            <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center gap-2">
+                                <Icons.AlertCircle />
+                                {uploadError}
+                            </div>
+                        )}
+
+                        {/* VIEW: DASHBOARD */}
+                        {activeTab === 'dashboard' && (
+                            <div className="space-y-6 fade-in">
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <StatCard title="Total de Alunos" value={processedData.reduce((acc, curr) => acc + (curr.alunos || 0), 0)} icon={Icons.Users} color="bg-blue-600" />
+                                    <StatCard title="Turmas Ativas" value={processedData.length} icon={Icons.BookOpen} color="bg-orange-500" />
+                                    <StatCard title="Instrutores" value={instructorStats.length} icon={Icons.School} color="bg-cyan-500" />
+                                </div>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-96">
+                                        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Icons.BarChart3 /> Carga de Alunos por Instrutor</h3>
+                                        <ResponsiveContainer width="100%" height="90%">
+                                            <BarChart data={instructorStats} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
+                                                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
+                                                <XAxis type="number" />
+                                                <YAxis dataKey="nome" type="category" width={80} tick={{fontSize: 11}} />
+                                                <Tooltip cursor={{fill: '#f4f6f8'}} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
+                                                <Bar dataKey="totalAlunos" fill="#004587" radius={[0, 4, 4, 0]} name="Alunos" barSize={20}>
+                                                    {instructorStats.map((entry, index) => (
+                                                        <Cell key={`cell-${index}`} fill={index % 2 === 0 ? '#004587' : '#F68B1F'} />
+                                                    ))}
+                                                </Bar>
+                                            </BarChart>
+                                        </ResponsiveContainer>
+                                    </div>
+
+                                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-96">
+                                        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Icons.BarChart3 /> Qtd. de Turmas por Instrutor</h3>
+                                        <ResponsiveContainer width="100%" height="90%">
+                                            <BarChart data={instructorStats} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                                                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                                                <XAxis dataKey="nome" tick={{fontSize: 11}} />
+                                                <YAxis allowDecimals={false} />
+                                                <Tooltip cursor={{fill: '#f4f6f8'}} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
+                                                <Bar dataKey="totalTurmas" fill="#00A4E0" radius={[4, 4, 0, 0]} name="Turmas" barSize={30} />
+                                            </BarChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+
+                                {/* MIX DE CURSOS */}
+                                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                                    <h3 className="text-lg font-bold text-gray-800 mb-6">Detalhamento: Mix de Cursos por Instrutor</h3>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                        {instructorStats.map((inst) => (
+                                            <div key={inst.nome} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow bg-gray-50">
+                                                <div className="flex justify-between items-center mb-3">
+                                                    <h4 className="font-bold text-blue-900">{inst.nome}</h4>
+                                                    <span className="text-xs bg-white border border-gray-200 text-gray-600 px-2 py-1 rounded-full">{inst.totalAlunos} alunos</span>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    {Object.entries(inst.cursos).map(([curso, qtd]) => (
+                                                        <div key={curso} className="flex justify-between text-sm items-center">
+                                                            <span className="text-gray-600 truncate max-w-[150px]" title={curso}>{curso}</span>
+                                                            <div className="flex items-center gap-2">
+                                                                <div className="w-16 h-2 bg-gray-200 rounded-full overflow-hidden">
+                                                                    <div className="h-full bg-orange-400 rounded-full" style={{ width: `${(qtd / inst.totalTurmas) * 100}%` }}></div>
+                                                                </div>
+                                                                <span className="font-bold text-gray-700 text-xs">{qtd}</span>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* VIEW: SIMULADOR */}
+                        {activeTab === 'simulator' && (
+                            <div className="max-w-4xl mx-auto space-y-8 fade-in">
+                                <div className="bg-gradient-to-r from-blue-900 to-blue-800 text-white p-8 rounded-2xl shadow-lg">
+                                    <h2 className="text-2xl font-bold mb-2">Simulador de Distribuição</h2>
+                                    <p className="text-blue-200 mb-6">O "Robô" analisa quem está com menos carga e menos turmas desse tipo.</p>
+                                    
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+                                        <div>
+                                            <label className="block text-sm font-medium text-blue-100 mb-1">Nome do Curso</label>
+                                            <select value={newClassCourse} onChange={(e) => setNewClassCourse(e.target.value)} className="w-full bg-white/10 border border-blue-400 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-400 option:text-gray-800">
+                                                {/* Extrai cursos únicos dinamicamente */}
+                                                {[...new Set(processedData.map(d => d.curso))].sort().map(c => (
+                                                    <option key={c} value={c} className="text-gray-800">{c}</option>
+                                                ))}
+                                                <option className="text-gray-800" value="Novo Curso">Outro...</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-blue-100 mb-1">Total de Alunos</label>
+                                            <input type="number" value={newClassStudents} onChange={(e) => setNewClassStudents(Number(e.target.value))} className="w-full bg-white/10 border border-blue-400 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                                        </div>
+                                    </div>
+                                    
+                                    <button onClick={handleSimulate} className="mt-6 w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-lg shadow-md transition-all flex items-center justify-center gap-2">
+                                        <Icons.Search /> Encontrar Melhor Instrutor
+                                    </button>
+                                </div>
+
+                                {recommendation && (
+                                    <div className="space-y-4 fade-in">
+                                        <div className="bg-white border-l-4 border-green-500 rounded-lg shadow-md p-6 relative overflow-hidden">
+                                            <div className="absolute top-0 right-0 p-4 opacity-10 text-green-500"><Icons.CheckCircle /></div>
+                                            <div className="relative z-10">
+                                                <p className="text-sm text-green-600 font-bold uppercase tracking-wider mb-1">Melhor Opção</p>
+                                                <h2 className="text-3xl font-bold text-gray-800 mb-2">{recommendation[0].nome}</h2>
+                                                <p className="text-gray-600 max-w-lg mb-4">Este instrutor tem a melhor combinação de disponibilidade.</p>
+                                                <div className="flex flex-wrap gap-4 text-sm">
+                                                    <div className="bg-gray-100 px-3 py-1 rounded">
+                                                        <span className="block text-gray-500 text-xs">Alunos Atuais</span>
+                                                        <span className="font-bold">{recommendation[0].details.alunos}</span>
+                                                    </div>
+                                                    <div className="bg-gray-100 px-3 py-1 rounded">
+                                                        <span className="block text-gray-500 text-xs">Turmas de {newClassCourse}</span>
+                                                        <span className="font-bold">{recommendation[0].details.mesmoCurso}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                                            <div className="bg-gray-50 px-6 py-3 border-b border-gray-200"><h4 className="font-semibold text-gray-700">Outras Opções (Ranking)</h4></div>
+                                            <div className="divide-y divide-gray-100">
+                                                {recommendation.slice(1).map((inst, idx) => (
+                                                    <div key={inst.nome} className="px-6 py-4 flex items-center justify-between hover:bg-gray-50">
+                                                        <div className="flex items-center gap-4">
+                                                            <span className="text-gray-400 font-mono text-lg w-6">#{idx + 2}</span>
+                                                            <div>
+                                                                <p className="font-medium text-gray-800">{inst.nome}</p>
+                                                                <p className="text-xs text-gray-500">{inst.details.alunos} alunos • {inst.details.mesmoCurso} turmas deste curso</p>
+                                                            </div>
+                                                        </div>
+                                                        <span className={`text-xs px-2 py-1 rounded-full ${inst.details.mesmoCurso > 1 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                                                            {inst.details.mesmoCurso > 1 ? 'Muitas turmas iguais' : 'Equilibrado'}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* VIEW: LISTA */}
+                        {activeTab === 'list' && (
+                            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden fade-in">
+                                <div className="p-6 border-b border-gray-200 flex justify-between items-center">
+                                    <h3 className="font-bold text-gray-800 text-lg">Base de Dados Completa</h3>
+                                    <span className="text-sm bg-blue-100 text-blue-800 px-3 py-1 rounded-full font-bold">
+                                        {processedData.length} Turmas Carregadas
+                                    </span>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm text-left text-gray-500">
+                                        <thead className="text-xs text-gray-700 uppercase bg-gray-50">
+                                            <tr>
+                                                <th className="px-6 py-3">ID Turma</th>
+                                                <th className="px-6 py-3">Curso</th>
+                                                <th className="px-6 py-3">Analista</th>
+                                                <th className="px-6 py-3 text-center">Alunos</th>
+                                                <th className="px-6 py-3">Instr. 1</th>
+                                                <th className="px-6 py-3">Instr. 2</th>
+                                                <th className="px-6 py-3">Transf.</th>
+                                                <th className="px-6 py-3">Resp. Atual</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {processedData.map((row, idx) => (
+                                                <tr key={idx} className="bg-white border-b hover:bg-gray-50">
+                                                    <td className="px-6 py-4 font-medium text-gray-900">{row.id}</td>
+                                                    <td className="px-6 py-4">
+                                                        <span className={`px-2 py-1 rounded-full text-xs font-semibold
+                                                            ${row.curso.includes('Administrativo') ? 'bg-blue-100 text-blue-800' : 
+                                                            row.curso.includes('Vendas') ? 'bg-green-100 text-green-800' : 
+                                                            'bg-orange-100 text-orange-800'}`}>
+                                                            {row.curso}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-4">{row.analista}</td>
+                                                    <td className="px-6 py-4 text-center font-bold">{row.alunos}</td>
+                                                    <td className="px-6 py-4 text-gray-400">{row.instrutor1}</td>
+                                                    <td className="px-6 py-4 text-gray-400">{row.instrutor2 || '-'}</td>
+                                                    <td className="px-6 py-4 text-xs font-mono">{row.dataTransferencia || '-'}</td>
+                                                    <td className="px-6 py-4">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-bold text-blue-900">{row.instrutorAtual}</span>
+                                                            {row.statusTransferencia === 'Transferido' && (
+                                                                <Icons.ArrowRightLeft className="text-orange-500 w-4 h-4" />
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </main>
                 </div>
-              </div>
-            </div>
-            {processedData.length === 0 ? (
-              <div className="p-12 text-center text-gray-500">
-                <FileSpreadsheet className="mx-auto h-12 w-12 text-gray-300 mb-4" />
-                <p>Nenhuma turma encontrada. Faça upload de um arquivo CSV.</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left text-gray-500">
-                  <thead className="text-xs text-gray-700 uppercase bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3">Turma</th>
-                      <th className="px-6 py-3">Curso</th>
-                      <th className="px-6 py-3">Analista</th>
-                      <th className="px-6 py-3 text-center">Alunos</th>
-                      <th className="px-6 py-3">Instrutor 1</th>
-                      <th className="px-6 py-3">Instrutor 2</th>
-                      <th className="px-6 py-3">Transferência</th>
-                      <th className="px-6 py-3">Responsável Atual</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {processedData.map((row) => (
-                      <tr key={row.id} className="bg-white border-b hover:bg-gray-50">
-                        <td className="px-6 py-4 font-medium text-gray-900">{row.id}</td>
-                        <td className="px-6 py-4">
-                          <span className={`px-2 py-1 rounded-full text-xs font-semibold
-                            ${row.curso === 'Administrativo' ? 'bg-blue-100 text-blue-800' : 
-                              row.curso === 'Vendas' ? 'bg-green-100 text-green-800' : 
-                              'bg-orange-100 text-orange-800'}`}>
-                            {row.curso}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4">{row.analista}</td>
-                        <td className="px-6 py-4 text-center font-bold">{row.alunos}</td>
-                        <td className="px-6 py-4 text-gray-400">{row.instrutor1}</td>
-                        <td className="px-6 py-4 text-gray-400">{row.instrutor2 || '-'}</td>
-                        <td className="px-6 py-4 text-xs font-mono">{row.dataTransferencia || '-'}</td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-blue-900">{row.instrutorAtual}</span>
-                            {row.statusTransferencia === 'Transferido' && (
-                              <ArrowRightLeft size={14} className="text-orange-500" title="Turma Transferida" />
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-      </main>
-    </div>
-  );
-}
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
