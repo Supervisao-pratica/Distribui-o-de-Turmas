@@ -134,13 +134,9 @@
                 if (val instanceof Date) return val.toISOString().split('T')[0];
                 const str = String(val).trim();
                 if (str.length < 8) return ''; 
-                // Tenta formato DD/MM/YYYY
                 if (str.match(/^\d{2}\/\d{2}\/\d{4}$/)) { const [dd,mm,yyyy] = str.split('/'); return `${yyyy}-${mm}-${dd}`; }
-                // Tenta formato YYYY-MM-DD
                 if (str.match(/^\d{4}-\d{2}-\d{2}$/)) return str;
-                // Excel serial date (se vier como número)
                 if (!isNaN(str) && Number(str) > 20000) {
-                     // Lógica aproximada para serial do Excel
                      const excelEpoch = new Date(1899, 11, 30);
                      const date = new Date(excelEpoch.getTime() + Number(str) * 86400000);
                      return date.toISOString().split('T')[0];
@@ -155,7 +151,6 @@
                 return String(val).trim();
             };
             
-            // Função para converter data ISO (YYYY-MM-DD) para PT-BR (DD/MM/AAAA)
             const formatDatePTBR = (isoDate) => {
                 if (!isoDate) return '';
                 const parts = isoDate.split('-');
@@ -176,16 +171,19 @@
                     try {
                         if (row.termino) {
                             const terminoDate = new Date(row.termino + 'T00:00:00');
-                            // AJUSTE: Se hoje > término, status Finalizado
                             if (!isNaN(terminoDate.getTime()) && today > terminoDate) {
                                 status = 'Finalizado'; 
                                 isFinished = true;
                             }
                         }
+                        // LÓGICA DE TRANSFERÊNCIA AJUSTADA
+                        // Regra: até a dataTransferencia (inclusive) é Instrutor 1.
+                        // APÓS a dataTransferencia (dia seguinte em diante), é Instrutor 2.
                         if (!isFinished && row.instrutor2 && row.dataTransferencia) {
                             const transferDate = new Date(row.dataTransferencia + 'T00:00:00'); 
                             if (!isNaN(transferDate.getTime())) {
-                                if (today >= transferDate) {
+                                // Se HOJE for MAIOR que a data de transferência, o bastão já passou
+                                if (today > transferDate) {
                                     currentInstructor = row.instrutor2;
                                     status = 'Transferido';
                                 }
@@ -197,6 +195,26 @@
                     return { ...row, instrutorAtual: currentInstructor, status, isFinished };
                 }).filter(Boolean);
             }, [data]);
+
+            // --- FUNÇÃO DIA ÚTIL ---
+            const getNextWorkingDay = (dateString) => {
+                if (!dateString) return '';
+                try {
+                    const date = new Date(dateString + 'T00:00:00');
+                    date.setDate(date.getDate() + 1); // Adiciona 1 dia (o dia seguinte)
+                    
+                    // Se caiu sábado (6), adiciona +2 para segunda
+                    if (date.getDay() === 6) {
+                        date.setDate(date.getDate() + 2);
+                    } 
+                    // Se caiu domingo (0), adiciona +1 para segunda
+                    else if (date.getDay() === 0) {
+                        date.setDate(date.getDate() + 1);
+                    }
+                    
+                    return date.toLocaleDateString('pt-BR');
+                } catch (e) { return ''; }
+            };
 
             // --- LÓGICA DE BALANCEAMENTO REVISADA ---
             const getRecommendationsFor = (course, excludeName) => {
@@ -272,15 +290,6 @@
                 alert(`Sucesso! Turmas de ${course} transferidas de ${instructor} para ${candidate.nome}.`);
             };
 
-            const getNextWorkingDay = (dateString) => {
-                if (!dateString) return '';
-                try {
-                    const date = new Date(dateString + 'T00:00:00');
-                    date.setDate(date.getDate() + 1); 
-                    return date.toLocaleDateString('pt-BR');
-                } catch (e) { return ''; }
-            };
-
             // --- LISTAS ÚNICAS ---
             const uniqueInstrutores = useMemo(() => {
                 const set = new Set();
@@ -328,7 +337,9 @@
                     
                     const inst = row.instrutorAtual;
                     
-                    if (!stats[inst]) stats[inst] = { nome: inst, totalAlunos: 0, totalTurmas: 0, analistas: new Set(), cursos: {}, myClasses: [] };
+                    // Inicializa objeto de estatística se não existir
+                    // Adicionamos 'receivedClasses' para rastrear o histórico
+                    if (!stats[inst]) stats[inst] = { nome: inst, totalAlunos: 0, totalTurmas: 0, analistas: new Set(), cursos: {}, myClasses: [], receivedClasses: [] };
                     
                     const qtdAlunos = parseInt(row.alunos);
                     stats[inst].totalAlunos += isNaN(qtdAlunos) ? 0 : qtdAlunos;
@@ -337,9 +348,16 @@
                     if (row.analista) stats[inst].analistas.add(row.analista);
                     const curso = row.curso || 'Outros';
                     stats[inst].cursos[curso] = (stats[inst].cursos[curso] || 0) + 1;
+
+                    // LÓGICA DE RASTREAMENTO:
+                    // Se a turma está "Transferida" E o instrutor atual é o Instrutor 2
+                    // E existe um Instrutor 1 diferente, adicionamos ao "receivedClasses"
+                    if (row.status === 'Transferido' && row.instrutor2 === inst && row.instrutor1 && row.instrutor1 !== inst) {
+                        stats[inst].receivedClasses.push(row);
+                    }
                 });
 
-                // AJUSTE: Usar processedData aqui para garantir que temos o status 'isFinished'
+                // Popula 'myClasses' (Turmas onde ele é o titular original - para gestão de saída)
                 processedData.forEach(row => {
                     if (row.instrutor1 && stats[row.instrutor1]) {
                         stats[row.instrutor1].myClasses.push(row);
@@ -494,7 +512,8 @@
                             }
                             if (st !== 'Finalizado' && row.instrutor2 && row.dataTransferencia) {
                                 const tf = new Date(row.dataTransferencia+'T00:00:00');
-                                if (!isNaN(tf) && today >= tf) currInst = row.instrutor2;
+                                // Se HOJE > Data Transferência
+                                if (!isNaN(tf) && today > tf) currInst = row.instrutor2;
                             }
                         } catch(e) {}
 
@@ -536,7 +555,7 @@
                         let titularNaData = turma.instrutor1;
                         if (turma.instrutor2 && turma.dataTransferencia) {
                             const transfDate = new Date(turma.dataTransferencia + 'T00:00:00');
-                            if (subDate >= transfDate) titularNaData = turma.instrutor2;
+                            if (subDate > transfDate) titularNaData = turma.instrutor2;
                         }
                         let sugestao = '';
                         if (titularNaData === turma.instrutor1 && turma.instrutor2) sugestao = turma.instrutor2;
@@ -799,6 +818,29 @@
                                                 </div>
                                             </div>
 
+                                            {/* SEÇÃO: TURMAS RECEBIDAS (HISTÓRICO DE QUEM ERA O INSTRUTOR 1) */}
+                                            {inst.receivedClasses && inst.receivedClasses.length > 0 && (
+                                                <div className="border-t border-gray-100 pt-3 mt-2">
+                                                    <p className="text-xs font-bold text-blue-600 uppercase mb-2 flex items-center gap-1">
+                                                        <Icons.Check /> Turmas Recebidas (Histórico)
+                                                    </p>
+                                                    <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+                                                        {inst.receivedClasses.map(cls => (
+                                                            <div key={cls.id} className="text-xs bg-blue-50 p-1.5 rounded flex justify-between items-center border border-blue-100">
+                                                                <div>
+                                                                    <span className="font-bold text-gray-700">T.{cls.id}</span>
+                                                                    <span className="text-gray-500 mx-1">-</span>
+                                                                    <span className="text-gray-600">{cls.curso.substring(0, 15)}...</span>
+                                                                </div>
+                                                                <span className="text-[10px] bg-white px-1 border rounded text-gray-500" title={`Ex-Titular: ${cls.instrutor1}`}>
+                                                                    Ex: {cls.instrutor1}
+                                                                </span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+
                                             {/* GESTÃO DE TRANSIÇÃO DENTRO DO CARD */}
                                             {inst.myClasses && inst.myClasses.length > 0 && (
                                                 <div className="border-t border-gray-100 pt-3 mt-2">
@@ -817,7 +859,7 @@
                                                                 <div className="flex items-center gap-1 text-gray-500 mt-1">
                                                                     <span>Fim I1: {cls.dataTransferencia ? formatDatePTBR(cls.dataTransferencia) : 'N/A'}</span>
                                                                     <Icons.ArrowRight />
-                                                                    <span>Início I2: {getNextWorkingDay(cls.dataTransferencia) || 'N/A'}</span>
+                                                                    <span className="font-bold text-green-700" title="Início dia útil seguinte">Início I2: {getNextWorkingDay(cls.dataTransferencia) || 'N/A'}</span>
                                                                 </div>
                                                                 <div className="mt-1 flex items-center justify-between">
                                                                     <span className="font-semibold text-gray-600">
