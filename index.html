@@ -176,9 +176,7 @@
                                 isFinished = true;
                             }
                         }
-                        // LÓGICA DE TRANSFERÊNCIA AJUSTADA
-                        // Regra: até a dataTransferencia (inclusive) é Instrutor 1.
-                        // APÓS a dataTransferencia (dia seguinte em diante), é Instrutor 2.
+                        // LÓGICA DE TRANSFERÊNCIA
                         if (!isFinished && row.instrutor2 && row.dataTransferencia) {
                             const transferDate = new Date(row.dataTransferencia + 'T00:00:00'); 
                             if (!isNaN(transferDate.getTime())) {
@@ -422,6 +420,7 @@
                         let headerRowIndex = 0;
                         let headerRow = jsonData[0] || [];
                         
+                        // Tenta achar a linha de cabeçalho
                         for(let r=0; r<Math.min(jsonData.length, 5); r++) {
                             const rowStr = jsonData[r].map(c => String(c).toLowerCase()).join(' ');
                             if(rowStr.includes('turma') && rowStr.includes('curso')) {
@@ -446,9 +445,10 @@
                             else if(val.includes('término') || val === 'termino') map.termino = idx;
                             else if(val.includes('instrutor 1')) map.i1 = idx;
                             else if(val.includes('instrutor 2') && map.i2 === -1) map.i2 = idx;
-                            else if(val.includes('transferência') || val.includes('transferencia')) map.dt = idx;
+                            else if(val.includes('transferência') || val.includes('transferencia') || val.includes('troca')) map.dt = idx;
                         });
 
+                        // Fallbacks padrão
                         if (map.id === -1) map.id = 0;
                         if (map.curso === -1) map.curso = 1;
                         if (map.analista === -1) map.analista = 2;
@@ -457,7 +457,28 @@
                         if (map.termino === -1) map.termino = 5;
                         if (map.i1 === -1) map.i1 = 6;
                         if (map.i2 === -1) map.i2 = 7; 
-                        if (map.dt === -1) map.dt = 8; 
+                        
+                        // --- DETECÇÃO INTELIGENTE DE DATA DE TRANSFERÊNCIA ---
+                        // Se não achou pelo cabeçalho, procura na primeira linha de dados uma data válida
+                        // que não seja Inicio ou Termino
+                        if (map.dt === -1 && jsonData.length > headerRowIndex + 1) {
+                            const sampleRow = jsonData[headerRowIndex + 1];
+                            for (let j = 6; j < sampleRow.length; j++) {
+                                // Ignora colunas já mapeadas como inicio/termino
+                                if (j === map.inicio || j === map.termino) continue;
+                                
+                                const val = safeDate(sampleRow[j]);
+                                // Se encontrou uma data válida (ex: 2026-...) e está longe das primeiras colunas
+                                if (val && val.length > 5) {
+                                    // Validação extra: não pode ser o nome do instrutor
+                                    if (j !== map.i1 && j !== map.i2) {
+                                        map.dt = j;
+                                        console.log("Data Transferência detectada na coluna: " + j);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                         
                         const newRows = [];
                         for(let i = headerRowIndex + 1; i < jsonData.length; i++) {
@@ -485,7 +506,7 @@
                         
                         if (newRows.length > 0) { 
                             setData(newRows); 
-                            alert(`Importação concluída! ${newRows.length} turmas carregadas.`); 
+                            alert(`Importação concluída! ${newRows.length} turmas carregadas. Data de Troca detectada na coluna ${map.dt >= 0 ? map.dt + 1 : 'NÃO ENCONTRADA'}`); 
                         } else {
                             alert("Nenhum dado válido encontrado.");
                         }
