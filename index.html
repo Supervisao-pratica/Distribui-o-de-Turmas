@@ -27,9 +27,11 @@
         
         .timeline-line { position: absolute; left: 15px; top: 0; bottom: 0; width: 2px; background: #e2e8f0; z-index: 0; }
         .timeline-item { position: relative; z-index: 1; }
+        .modal-backdrop { background-color: rgba(15, 23, 42, 0.7); backdrop-filter: blur(4px); }
         
-        /* Modal Backdrop com Blur */
-        .modal-backdrop { background-color: rgba(15, 23, 42, 0.6); backdrop-filter: blur(4px); }
+        /* Estilo para tabela de comparação */
+        .comp-table th { @apply text-xs font-bold text-gray-500 uppercase tracking-wider py-2 px-3 text-left bg-gray-50 border-b; }
+        .comp-table td { @apply text-sm py-2 px-3 border-b border-gray-100; }
     </style>
 </head>
 <body>
@@ -83,7 +85,8 @@
             ArrowRight: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>,
             Refresh: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>,
             Eye: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>,
-            Maximize: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+            Maximize: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>,
+            Trend: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
         };
 
         const MOCK_DATA = [
@@ -133,7 +136,8 @@
             const [recommendations, setRecommendations] = useState(null);
             const [urgentSubs, setUrgentSubs] = useState([]);
             
-            const [currentRecommendedInst, setCurrentRecommendedInst] = useState('');
+            // Sugestões para o Modal de Nova Turma
+            const [modalSuggestions, setModalSuggestions] = useState({ i1: [], i2: [] });
 
             const fileInputRef = useRef(null);
 
@@ -213,25 +217,48 @@
                 }).filter(Boolean);
             }, [data, viewDate]); // Recalcula sempre que a data muda
 
-            // --- ESTATÍSTICAS POR INSTRUTOR (AGORA COM TIMELINE) ---
+            // --- LISTA COMPLETA DE INSTRUTORES (REFORÇADA) ---
+            const uniqueInstrutores = useMemo(() => {
+                const set = new Set();
+                data.forEach(d => { 
+                    if (d.instrutor1 && typeof d.instrutor1 === 'string') set.add(d.instrutor1.trim()); 
+                    if (d.instrutor2 && typeof d.instrutor2 === 'string') set.add(d.instrutor2.trim()); 
+                });
+                return Array.from(set)
+                    .filter(d => d && d !== '' && d !== 'Não Atribuído')
+                    .sort();
+            }, [data]);
+
+            // --- ESTATÍSTICAS POR INSTRUTOR (AGORA COM PROJEÇÃO FUTURA DETALHADA) ---
             const instructorStats = useMemo(() => {
                 const stats = {};
+                
+                // Passo 1: Inicializa
+                uniqueInstrutores.forEach(name => {
+                    stats[name] = {
+                        nome: name, 
+                        totalAlunos: 0, 
+                        totalTurmas: 0, 
+                        analistas: new Set(), 
+                        cursos: {},          // Contagem atual por curso
+                        myClasses: [],       
+                        receivedClasses: [], 
+                        futureEvents: [],
+                        // NOVOS CAMPOS PARA FUTURO
+                        futureTotal: 0,
+                        futureCursos: {}     // Contagem futura por curso
+                    };
+                });
+
+                // Passo 2: Popula ESTADO ATUAL
                 processedData.forEach(row => {
-                    // Ignora finalizados na contagem de carga atual
                     if (row.isFinished || row.instrutorAtual === 'Não Atribuído') return;
                     
                     const inst = row.instrutorAtual;
                     
-                    if (!stats[inst]) stats[inst] = { 
-                        nome: inst, 
-                        totalAlunos: 0, 
-                        totalTurmas: 0, 
-                        analistas: new Set(), 
-                        cursos: {}, 
-                        myClasses: [],       // Turmas onde ele é o titular original
-                        receivedClasses: [], // Turmas recebidas
-                        futureEvents: []     // Lista de eventos futuros
-                    };
+                    if (!stats[inst]) { // Safety check
+                        stats[inst] = { nome: inst, totalAlunos: 0, totalTurmas: 0, analistas: new Set(), cursos: {}, myClasses: [], receivedClasses: [], futureEvents: [], futureTotal: 0, futureCursos: {} };
+                    }
                     
                     const qtdAlunos = parseInt(row.alunos);
                     stats[inst].totalAlunos += isNaN(qtdAlunos) ? 0 : qtdAlunos;
@@ -241,86 +268,78 @@
                     const curso = row.curso || 'Outros';
                     stats[inst].cursos[curso] = (stats[inst].cursos[curso] || 0) + 1;
 
-                    // Classificação para Active/History
                     if (row.status === 'Transferido' && row.instrutor2 === inst && row.instrutor1 && row.instrutor1 !== inst) {
                         stats[inst].receivedClasses.push(row);
                     }
                 });
 
-                // Popula 'myClasses' e Calcula Futuro
+                // Passo 3: Popula EVENTOS e CALCULA FUTURO
                 const targetDate = new Date(viewDate + 'T00:00:00');
 
-                data.forEach(row => { // Usa 'data' original para ver eventos futuros independentemente do estado atual
+                data.forEach(row => {
                     if(!row) return;
                     
-                    // Popula MyClasses para o titular
-                    if (row.instrutor1 && stats[row.instrutor1]) {
-                        // Evita duplicata se já foi processado acima, mas garante que existe na lista
-                        if(!stats[row.instrutor1].myClasses.find(c => c.id === row.id)) {
-                             // Precisamos da versão processada para saber o status no dia
+                    // Popula listas
+                    if (row.instrutor1 && stats[row.instrutor1] && !stats[row.instrutor1].myClasses.find(c => c.id === row.id)) {
                              const processed = processedData.find(p => p.id === row.id);
                              if(processed) stats[row.instrutor1].myClasses.push(processed);
-                        }
                     }
 
-                    // CALCULA EVENTOS FUTUROS (Após a data de cenário)
+                    // GERA EVENTOS
                     if (row.dataTransferencia && row.instrutor2) {
                         const transferDate = new Date(row.dataTransferencia + 'T00:00:00');
-                        
-                        // Se a transferência é no FUTURO em relação à data selecionada
                         if (transferDate > targetDate) {
-                            // Para o Instrutor 1: Vai SAIR
-                            if (stats[row.instrutor1]) {
-                                stats[row.instrutor1].futureEvents.push({
-                                    type: 'exit',
-                                    date: row.dataTransferencia,
-                                    turma: row,
-                                    detail: `Passa para ${row.instrutor2}`
-                                });
-                            }
-                            // Para o Instrutor 2: Vai ENTRAR
-                            if (stats[row.instrutor2]) {
-                                stats[row.instrutor2].futureEvents.push({
-                                    type: 'entry',
-                                    date: row.dataTransferencia,
-                                    turma: row,
-                                    detail: `Recebe de ${row.instrutor1}`
-                                });
-                            }
+                            if (stats[row.instrutor1]) stats[row.instrutor1].futureEvents.push({ type: 'exit', date: row.dataTransferencia, turma: row, detail: `Passa para ${row.instrutor2}` });
+                            if (stats[row.instrutor2]) stats[row.instrutor2].futureEvents.push({ type: 'entry', date: row.dataTransferencia, turma: row, detail: `Recebe de ${row.instrutor1}` });
                         }
                     }
                     
-                    // Evento de Término
                     if (row.termino) {
                         const terminoDate = new Date(row.termino + 'T00:00:00');
                         if (terminoDate > targetDate) {
-                            // Quem estiver com a turma na data de término (aproximado, simplificado)
-                            // Se tem troca antes do fim, o evento vai pro I2, senão pro I1
                             let responsavelNoFim = row.instrutor1;
                             if (row.dataTransferencia && row.instrutor2) {
                                 const transferDate = new Date(row.dataTransferencia + 'T00:00:00');
                                 if (transferDate < terminoDate) responsavelNoFim = row.instrutor2;
                             }
-                            
-                            if (stats[responsavelNoFim]) {
-                                stats[responsavelNoFim].futureEvents.push({
-                                    type: 'end',
-                                    date: row.termino,
-                                    turma: row,
-                                    detail: 'Turma Finaliza'
-                                });
-                            }
+                            if (stats[responsavelNoFim]) stats[responsavelNoFim].futureEvents.push({ type: 'end', date: row.termino, turma: row, detail: 'Turma Finaliza' });
                         }
                     }
                 });
 
-                // Ordena eventos futuros por data
-                Object.values(stats).forEach(s => {
-                    s.futureEvents.sort((a,b) => new Date(a.date) - new Date(b.date));
+                // Passo 4: PROCESSA O FUTURO (Aplica eventos sobre o estado atual)
+                Object.values(stats).forEach(inst => {
+                    // Ordena eventos
+                    inst.futureEvents.sort((a,b) => new Date(a.date) - new Date(b.date));
+
+                    // Inicia com o estado atual
+                    let fCount = inst.totalTurmas;
+                    let fCourses = { ...inst.cursos };
+
+                    // Aplica mudanças
+                    inst.futureEvents.forEach(evt => {
+                        const c = evt.turma.curso || 'Outros';
+                        if (typeof fCourses[c] === 'undefined') fCourses[c] = 0;
+
+                        if (evt.type === 'entry') {
+                            fCount++;
+                            fCourses[c]++;
+                        } else if (evt.type === 'exit' || evt.type === 'end') {
+                            fCount--;
+                            fCourses[c]--;
+                        }
+                    });
+
+                    // Limpa negativos e zeros
+                    if(fCount < 0) fCount = 0;
+                    Object.keys(fCourses).forEach(k => { if(fCourses[k] < 0) fCourses[k] = 0; });
+
+                    inst.futureTotal = fCount;
+                    inst.futureCursos = fCourses;
                 });
 
                 return Object.values(stats).sort((a,b) => b.totalAlunos - a.totalAlunos);
-            }, [processedData, data, viewDate]);
+            }, [processedData, data, viewDate, uniqueInstrutores]);
 
             // --- ESTATÍSTICAS DO ANALISTA SELECIONADO ---
             const analystStats = useMemo(() => {
@@ -353,12 +372,6 @@
                 processedData.forEach(d => { if (d.dataTransferencia) set.add(d.dataTransferencia); });
                 return Array.from(set).sort();
             }, [processedData]);
-            
-            const uniqueInstrutores = useMemo(() => {
-                const set = new Set();
-                data.forEach(d => { if (d.instrutor1) set.add(d.instrutor1); if (d.instrutor2) set.add(d.instrutor2); });
-                return Array.from(set).filter(d => d !== 'Não Atribuído').sort();
-            }, [data]);
 
             const uniqueAnalistas = useMemo(() => [...new Set(processedData.map(d => d.analista))].filter(Boolean).sort(), [processedData]);
             const uniqueCursos = useMemo(() => [...new Set(processedData.map(d => d.curso))].filter(Boolean).sort(), [processedData]);
@@ -386,15 +399,21 @@
             // --- Handlers Básicos ---
             const handleAddClass = (e) => { e.preventDefault(); setData([...data, { ...newClass }]); setIsFormOpen(false); alert("Turma adicionada!"); };
             const handleAddSub = (e) => { e.preventDefault(); setSubstitutions([...substitutions, { ...newSub, status: 'Pendente' }]); setIsSubModalOpen(false); alert("Substituição agendada!"); };
+            
+            // --- NOVO: Handler Inteligente de Curso para Sugestões ---
             const handleNewClassCourseChange = (e) => {
                 const selectedCurso = e.target.value;
-                let suggested = '';
+                setNewClass({ ...newClass, curso: selectedCurso });
+
                 if (selectedCurso) {
-                    const recs = getRecommendationsFor(selectedCurso, '');
-                    if (recs && recs.length > 0) suggested = recs[0].nome;
+                    // Sugestões para I1: Baseado em quem tem MENOS carga agora e tem afinidade com o curso
+                    const recsI1 = getRecommendationsFor(selectedCurso, '').slice(0, 3);
+                    const recsI2 = getRecommendationsFor(selectedCurso, '').slice(0, 4); 
+
+                    setModalSuggestions({ i1: recsI1, i2: recsI2 });
+                } else {
+                    setModalSuggestions({ i1: [], i2: [] });
                 }
-                setCurrentRecommendedInst(suggested);
-                setNewClass({ ...newClass, curso: selectedCurso, instrutor1: suggested || newClass.instrutor1 });
             };
 
              // --- UPLOAD & EXPORT (RESTAURADO) ---
@@ -670,10 +689,6 @@
                                 const filteredReceived = applyFilters(inst.receivedClasses);
                                 const activeMyClasses = filteredMyClasses.filter(c => !c.isFinished && c.status !== 'Transferido');
                                 
-                                // Se o filtro de analista estiver ativo e o instrutor não tiver turmas para esse analista (mas tem para outros), esconde ou mostra vazio?
-                                // O filtro principal já removeu instrutores sem nenhuma relação. 
-                                // Aqui garantimos que só mostramos as turmas relevantes.
-                                
                                 return (
                                 <div key={inst.nome} className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 relative transition-card hover:border-blue-300">
                                     <div className="flex justify-between items-start mb-4">
@@ -749,10 +764,85 @@
 
                                 {/* Corpo Modal (Scrollável) */}
                                 <div className="flex-1 overflow-y-auto p-6 bg-gray-50">
+                                    <div className="flex gap-4 mb-6">
+                                        {/* CARTÃO RESUMO ATUAL */}
+                                        <div className="flex-1 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+                                            <h4 className="text-xs font-bold text-gray-500 uppercase mb-2">Cenário Atual ({formatDatePTBR(viewDate)})</h4>
+                                            <div className="flex justify-between items-end">
+                                                <div>
+                                                    <span className="text-3xl font-bold text-blue-900">{selectedInstructorDetail.totalTurmas}</span>
+                                                    <span className="text-sm text-gray-500 ml-1">Turmas</span>
+                                                </div>
+                                                <div className="text-right">
+                                                     <span className="block text-xl font-bold text-blue-700">{selectedInstructorDetail.totalAlunos}</span>
+                                                     <span className="text-xs text-gray-400">Jovens</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* CARTÃO PROJEÇÃO FUTURA */}
+                                        <div className="flex-1 bg-indigo-50 p-4 rounded-xl shadow-sm border border-indigo-200">
+                                            <h4 className="text-xs font-bold text-indigo-500 uppercase mb-2">Projeção Futura (Final)</h4>
+                                            <div className="flex justify-between items-end">
+                                                <div>
+                                                    <span className="text-3xl font-bold text-indigo-900">{selectedInstructorDetail.futureTotal}</span>
+                                                    <span className="text-sm text-indigo-600 ml-1">Turmas</span>
+                                                </div>
+                                                <div className="text-right">
+                                                    <span className={`text-sm font-bold px-2 py-1 rounded 
+                                                        ${(selectedInstructorDetail.futureTotal - selectedInstructorDetail.totalTurmas) > 0 ? 'bg-green-100 text-green-700' : 
+                                                          (selectedInstructorDetail.futureTotal - selectedInstructorDetail.totalTurmas) < 0 ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'}`}>
+                                                        {(selectedInstructorDetail.futureTotal - selectedInstructorDetail.totalTurmas) > 0 ? `+${selectedInstructorDetail.futureTotal - selectedInstructorDetail.totalTurmas}` : 
+                                                         (selectedInstructorDetail.futureTotal - selectedInstructorDetail.totalTurmas)} Var.
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
                                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                                         
-                                        {/* COLUNA 1: TURMAS ATIVAS NO CENÁRIO */}
+                                        {/* COLUNA 1: TABELA COMPARATIVA & TURMAS ATIVAS */}
                                         <div className="lg:col-span-2 space-y-6">
+                                            {/* TABELA COMPARATIVA DE CURSOS */}
+                                            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                                                <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 font-bold text-gray-700 text-sm flex items-center gap-2">
+                                                    <Icons.Trend /> Comparativo por Curso
+                                                </div>
+                                                <table className="min-w-full comp-table">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>Curso</th>
+                                                            <th className="text-center">Atual</th>
+                                                            <th className="text-center">Futuro</th>
+                                                            <th className="text-right">Variação</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {Object.keys({ ...selectedInstructorDetail.cursos, ...selectedInstructorDetail.futureCursos }).sort().map(curso => {
+                                                            const curr = selectedInstructorDetail.cursos[curso] || 0;
+                                                            const fut = selectedInstructorDetail.futureCursos[curso] || 0;
+                                                            const diff = fut - curr;
+                                                            if (curr === 0 && fut === 0) return null;
+                                                            return (
+                                                                <tr key={curso}>
+                                                                    <td className="font-medium text-gray-700">{curso}</td>
+                                                                    <td className="text-center font-bold text-blue-600">{curr}</td>
+                                                                    <td className="text-center font-bold text-indigo-600">{fut}</td>
+                                                                    <td className="text-right">
+                                                                        {diff !== 0 ? (
+                                                                            <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${diff > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                                                                {diff > 0 ? '+' : ''}{diff}
+                                                                            </span>
+                                                                        ) : <span className="text-gray-400">-</span>}
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+
                                             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
                                                 <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2 border-b pb-2">
                                                     <span className="text-green-600">●</span> Turmas Ativas ({selectedInstructorDetail.totalTurmas})
@@ -901,31 +991,71 @@
                                         <label className="block text-sm font-bold text-gray-700 mb-1">Término</label>
                                         <input required type="date" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" value={newClass.termino} onChange={e => setNewClass({...newClass, termino: e.target.value})} />
                                     </div>
+
+                                    {/* INSTRUTOR 1 COM SUGESTÕES */}
                                     <div>
-                                        <label className="block text-sm font-bold text-gray-700 mb-1 flex items-center gap-2">
-                                            Instrutor 1
-                                            {currentRecommendedInst && (
-                                                <span className="text-xs font-normal text-green-600 bg-green-50 px-2 py-0.5 rounded border border-green-200">
-                                                    Recomendado: {currentRecommendedInst}
-                                                </span>
-                                            )}
-                                        </label>
-                                        <input required type="text" list="instructors-list-main" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" value={newClass.instrutor1} onChange={e => setNewClass({...newClass, instrutor1: e.target.value})} placeholder="Selecione ou digite..." />
-                                        <datalist id="instructors-list-main">
-                                            {uniqueInstrutores.map(inst => (
-                                                <option key={inst} value={inst}>
-                                                    {inst === currentRecommendedInst ? `${inst} (Recomendado)` : inst}
-                                                </option>
-                                            ))}
-                                        </datalist>
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">Instrutor 1 (Titular)</label>
+                                        <input 
+                                            required 
+                                            type="text" 
+                                            list="all-instructors" 
+                                            className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" 
+                                            value={newClass.instrutor1} 
+                                            onChange={e => setNewClass({...newClass, instrutor1: e.target.value})} 
+                                            placeholder="Digite ou selecione..." 
+                                        />
+                                        
+                                        {modalSuggestions.i1.length > 0 && (
+                                            <div className="mt-2 flex flex-wrap gap-2">
+                                                <span className="text-xs font-bold text-gray-500 w-full flex items-center gap-1"><Icons.Bulb /> Sugestões (Menor Carga):</span>
+                                                {modalSuggestions.i1.map(rec => (
+                                                    <button 
+                                                        key={rec.nome}
+                                                        type="button"
+                                                        onClick={() => setNewClass(prev => ({ ...prev, instrutor1: rec.nome }))}
+                                                        className="text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-1 rounded hover:bg-green-100 transition flex items-center gap-1"
+                                                    >
+                                                        {rec.nome} ({rec.totalAlunos} alunos)
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
+
+                                    {/* INSTRUTOR 2 COM SUGESTÕES */}
                                     <div>
-                                        <label className="block text-sm font-bold text-gray-700 mb-1 flex justify-between">
-                                            <span>Instrutor 2 (Opcional)</span>
-                                        </label>
-                                        <input type="text" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" value={newClass.instrutor2} onChange={e => setNewClass({...newClass, instrutor2: e.target.value})} placeholder="Digite ou selecione abaixo..." />
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">Instrutor 2 (Opcional)</label>
+                                        <input 
+                                            type="text" 
+                                            list="all-instructors" 
+                                            className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" 
+                                            value={newClass.instrutor2} 
+                                            onChange={e => setNewClass({...newClass, instrutor2: e.target.value})} 
+                                            placeholder="Digite ou selecione..." 
+                                        />
+
+                                        {modalSuggestions.i2.length > 0 && (
+                                            <div className="mt-2 flex flex-wrap gap-2">
+                                                <span className="text-xs font-bold text-gray-500 w-full flex items-center gap-1"><Icons.Bulb /> Perspectiva (Disponíveis):</span>
+                                                {modalSuggestions.i2.filter(r => r.nome !== newClass.instrutor1).map(rec => (
+                                                    <button 
+                                                        key={rec.nome}
+                                                        type="button"
+                                                        onClick={() => setNewClass(prev => ({ ...prev, instrutor2: rec.nome }))}
+                                                        className="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2 py-1 rounded hover:bg-blue-100 transition flex items-center gap-1"
+                                                    >
+                                                        {rec.nome}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
                                     
+                                    {/* LISTA DE TODOS OS INSTRUTORES PARA O DATALIST */}
+                                    <datalist id="all-instructors">
+                                        {uniqueInstrutores.map(inst => <option key={inst} value={inst} />)}
+                                    </datalist>
+
                                     <div className="md:col-span-2 pt-4 flex gap-3">
                                         <button type="button" onClick={() => setIsFormOpen(false)} className="flex-1 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 font-bold">Cancelar</button>
                                         <button type="submit" className="flex-1 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold shadow-lg">Salvar Turma</button>
