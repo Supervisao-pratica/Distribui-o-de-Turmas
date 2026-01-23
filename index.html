@@ -87,7 +87,7 @@
         };
 
         const MOCK_DATA = [
-            { id: '202500029', curso: 'Administrativo', analista: 'Bianca', alunos: 31, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Sheila', instrutor2: '', dataTransferencia: '2026-02-04' },
+            { id: '202500029', curso: 'Administrativo', analista: 'Bianca', alunos: 31, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Sheila', instrutor2: 'Bruna', dataTransferencia: '2026-02-04' },
             { id: '202500118', curso: 'Administrativo', analista: 'Bianca', alunos: 31, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Bruna', instrutor2: 'Jaqueline', dataTransferencia: '2026-02-04' },
             { id: '202501228', curso: 'Supermercado', analista: 'Bianca', alunos: 28, inicio: '2025-12-02', termino: '2026-12-01', instrutor1: 'Luciano', instrutor2: 'Claire', dataTransferencia: '2026-02-04' }
         ];
@@ -106,7 +106,7 @@
         function App() {
             const [data, setData] = useState(MOCK_DATA);
             const [substitutions, setSubstitutions] = useState([]); 
-            const [filters, setFilters] = useState({ instrutor: '', analista: '' });
+            const [filters, setFilters] = useState({ instrutor: '', analista: '', curso: '', turma: '' });
             
             const [activeTab, setActiveTab] = useState('dashboard'); 
             const [isFormOpen, setIsFormOpen] = useState(false);
@@ -134,9 +134,33 @@
                 if (val instanceof Date) return val.toISOString().split('T')[0];
                 const str = String(val).trim();
                 if (str.length < 8) return ''; 
+                // Tenta formato DD/MM/YYYY
                 if (str.match(/^\d{2}\/\d{2}\/\d{4}$/)) { const [dd,mm,yyyy] = str.split('/'); return `${yyyy}-${mm}-${dd}`; }
+                // Tenta formato YYYY-MM-DD
                 if (str.match(/^\d{4}-\d{2}-\d{2}$/)) return str;
+                // Excel serial date (se vier como número)
+                if (!isNaN(str) && Number(str) > 20000) {
+                     // Lógica aproximada para serial do Excel
+                     const excelEpoch = new Date(1899, 11, 30);
+                     const date = new Date(excelEpoch.getTime() + Number(str) * 86400000);
+                     return date.toISOString().split('T')[0];
+                }
                 return '';
+            };
+            
+            const safeString = (val) => {
+                if (val === null || val === undefined) return '';
+                if (val instanceof Date) return val.toLocaleDateString('pt-BR');
+                if (typeof val === 'object') return JSON.stringify(val); 
+                return String(val).trim();
+            };
+            
+            // Função para converter data ISO (YYYY-MM-DD) para PT-BR (DD/MM/AAAA)
+            const formatDatePTBR = (isoDate) => {
+                if (!isoDate) return '';
+                const parts = isoDate.split('-');
+                if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+                return isoDate;
             };
 
             const processedData = useMemo(() => {
@@ -152,8 +176,9 @@
                     try {
                         if (row.termino) {
                             const terminoDate = new Date(row.termino + 'T00:00:00');
+                            // AJUSTE: Se hoje > término, status Finalizado
                             if (!isNaN(terminoDate.getTime()) && today > terminoDate) {
-                                status = 'Concluída';
+                                status = 'Finalizado'; 
                                 isFinished = true;
                             }
                         }
@@ -173,12 +198,16 @@
                 }).filter(Boolean);
             }, [data]);
 
-            // --- FUNÇÃO DE RECOMENDAÇÃO ---
+            // --- LÓGICA DE BALANCEAMENTO REVISADA ---
             const getRecommendationsFor = (course, excludeName) => {
+                let totalTurmasCurso = 0;
+                let instrutoresDoCurso = 0;
                 const stats = {};
+                
                 processedData.forEach(row => {
                     if (row.isFinished || row.instrutorAtual === 'Não Atribuído') return;
                     const inst = row.instrutorAtual;
+                    
                     if (!stats[inst]) stats[inst] = { nome: inst, totalAlunos: 0, totalTurmas: 0, cursos: {} };
                     
                     const qtdAlunos = parseInt(row.alunos) || 0;
@@ -187,24 +216,38 @@
                     const c = row.curso || 'Outros';
                     stats[inst].cursos[c] = (stats[inst].cursos[c] || 0) + 1;
                 });
+                
+                const allInstructors = Object.values(stats);
+                allInstructors.forEach(inst => {
+                    if (inst.cursos[course] > 0) {
+                        totalTurmasCurso += inst.cursos[course];
+                        instrutoresDoCurso++;
+                    }
+                });
+                
+                const mediaTurmasCurso = instrutoresDoCurso > 0 ? (totalTurmasCurso / instrutoresDoCurso) : 0;
 
-                return Object.values(stats)
-                    .filter(inst => inst.nome !== excludeName)
+                return allInstructors
                     .map(inst => {
-                        const loadPenalty = inst.totalAlunos; 
-                        const affinityBonus = (inst.cursos[course] || 0) * 40; 
-                        const score = (1000 - loadPenalty) + affinityBonus;
+                        const turmasDesteCurso = inst.cursos[course] || 0;
+                        const cargaTotalAlunos = inst.totalAlunos;
+                        const totalTurmasGeral = inst.totalTurmas;
+
+                        let score = 1000 - cargaTotalAlunos; 
+                        const diferencaMedia = turmasDesteCurso - mediaTurmasCurso;
+                        score -= (diferencaMedia * 150); 
+                        score -= (totalTurmasGeral * 50);
 
                         return {
                             ...inst,
                             score,
-                            affinityCount: inst.cursos[course] || 0
+                            turmasDesteCurso,
+                            cargaTotalAlunos
                         };
                     })
-                    .sort((a, b) => b.score - a.score); 
+                    .sort((a, b) => b.score - a.score);
             };
 
-            // --- FUNÇÃO PARA SALVAR INSTRUTOR 2 NO DADO ORIGINAL ---
             const assignInstructor2 = (turmaId, instructorName) => {
                 const newData = data.map(row => {
                     if (row.id === turmaId) {
@@ -213,58 +256,76 @@
                     return row;
                 });
                 setData(newData);
-                // Não precisa alertar sempre, mas visualmente vai mudar
             };
 
-            // --- FUNÇÃO PARA APLICAR REDISTRIBUIÇÃO (ATUALIZA O DADO) ---
             const applyRedistribution = (candidate) => {
                 const { instructor, course } = redistributionData;
-                
-                // Encontrar turmas do instrutor problemático nesse curso
                 const newData = data.map(row => {
-                    // Lógica: Se é uma turma ativa, do instrutor sobrecarregado, no curso alvo
-                    // E ele é o instrutor1 (ou instrutorAtual)
-                    // Transferimos a responsabilidade mudando o instrutor1 (assumindo redistribuição total da turma)
-                    // OU se for gestão de Instrutor 2, mudamos apenas instrutor 2.
-                    // Aqui vamos assumir redistribuição de carga: troca o titular.
                     const isTargetClass = (row.instrutor1 === instructor) && (row.curso === course);
-                    
                     if (isTargetClass) {
                         return { ...row, instrutor1: candidate.nome };
                     }
                     return row;
                 });
-
                 setData(newData);
                 setIsRedistributionModalOpen(false);
                 alert(`Sucesso! Turmas de ${course} transferidas de ${instructor} para ${candidate.nome}.`);
             };
 
-            // --- Lógica de datas para Instrutor 2 (Dia Seguinte) ---
             const getNextWorkingDay = (dateString) => {
                 if (!dateString) return '';
                 try {
                     const date = new Date(dateString + 'T00:00:00');
-                    date.setDate(date.getDate() + 1); // Adiciona 1 dia
+                    date.setDate(date.getDate() + 1); 
                     return date.toLocaleDateString('pt-BR');
                 } catch (e) { return ''; }
             };
+
+            // --- LISTAS ÚNICAS ---
+            const uniqueInstrutores = useMemo(() => {
+                const set = new Set();
+                processedData.forEach(d => { if (d.instrutor1) set.add(d.instrutor1); if (d.instrutor2) set.add(d.instrutor2); });
+                return Array.from(set).filter(d => d !== 'Não Atribuído').sort();
+            }, [processedData]);
+
+            const uniqueAnalistas = useMemo(() => {
+                return [...new Set(processedData.map(d => d.analista))].filter(Boolean).sort();
+            }, [processedData]);
+
+            const uniqueCursos = useMemo(() => {
+                return [...new Set(processedData.map(d => d.curso))].filter(Boolean).sort();
+            }, [processedData]);
+
+            const uniqueTurmas = useMemo(() => {
+                return processedData.map(d => d.id).sort();
+            }, [processedData]);
 
             const filteredData = useMemo(() => {
                 return processedData.filter(row => {
                     const iName = row.instrutorAtual || '';
                     const aName = row.analista || '';
+                    const cName = row.curso || '';
+                    const tId = row.id || '';
+                    
                     const matchInstrutor = filters.instrutor === '' || iName === filters.instrutor;
                     const matchAnalista = filters.analista === '' || aName === filters.analista;
-                    return matchInstrutor && matchAnalista;
+                    const matchCurso = filters.curso === '' || cName === filters.curso;
+                    const matchTurma = filters.turma === '' || tId === filters.turma;
+
+                    return matchInstrutor && matchAnalista && matchCurso && matchTurma;
                 });
             }, [processedData, filters]);
 
+            const selectedClassDetail = useMemo(() => {
+                if (!filters.turma) return null;
+                return processedData.find(d => d.id === filters.turma);
+            }, [filters.turma, processedData]);
+
             const instructorStats = useMemo(() => {
                 const stats = {};
-                // Coleta estatísticas gerais
                 processedData.forEach(row => {
                     if (row.isFinished || row.instrutorAtual === 'Não Atribuído') return;
+                    
                     const inst = row.instrutorAtual;
                     
                     if (!stats[inst]) stats[inst] = { nome: inst, totalAlunos: 0, totalTurmas: 0, analistas: new Set(), cursos: {}, myClasses: [] };
@@ -278,9 +339,8 @@
                     stats[inst].cursos[curso] = (stats[inst].cursos[curso] || 0) + 1;
                 });
 
-                // Coleta turmas onde o instrutor é TITULAR (Instrutor 1) para o card de transição
-                data.forEach(row => {
-                     // Verifica se tem data de transferência futura ou passada
+                // AJUSTE: Usar processedData aqui para garantir que temos o status 'isFinished'
+                processedData.forEach(row => {
                     if (row.instrutor1 && stats[row.instrutor1]) {
                         stats[row.instrutor1].myClasses.push(row);
                     }
@@ -308,22 +368,12 @@
                         alertType: overloadAlunos && overloadTurmas ? 'Crítico' : (overloadAlunos ? 'Alunos' : (overloadTurmas ? 'Turmas' : null))
                     };
                 }).sort((a,b) => b.totalAlunos - a.totalAlunos);
-            }, [processedData, data]); // Dependência 'data' para garantir atualização
-
-            const uniqueInstrutores = useMemo(() => {
-                const set = new Set();
-                processedData.forEach(d => { if (d.instrutor1) set.add(d.instrutor1); if (d.instrutor2) set.add(d.instrutor2); });
-                return Array.from(set).filter(d => d !== 'Não Atribuído').sort();
-            }, [processedData]);
-
-            const uniqueAnalistas = useMemo(() => {
-                return [...new Set(processedData.map(d => d.analista))].filter(Boolean).sort();
-            }, [processedData]);
+            }, [processedData, data]);
 
             // --- Handlers ---
             const handleRedistributeClick = (instructor) => {
                 const course = instructor.dominantCourse || 'Administrativo';
-                const candidates = getRecommendationsFor(course, instructor.nome).slice(0, 3);
+                const candidates = getRecommendationsFor(course, instructor.nome);
                 setRedistributionData({
                     instructor: instructor.nome,
                     course: course,
@@ -347,81 +397,81 @@
                         const dataBuffer = evt.target.result;
                         const wb = XLSX.read(dataBuffer, { type: 'array', cellDates: true });
                         let targetSheetName = wb.SheetNames[0];
-                        let foundHeader = false;
-                        for(let name of wb.SheetNames) {
-                            const wsTest = wb.Sheets[name];
-                            const jsonTest = XLSX.utils.sheet_to_json(wsTest, { header: 1, range: 0, limit: 5 });
-                            if (jsonTest.length > 0) {
-                                const row0 = jsonTest[0].map(c => String(c).toLowerCase());
-                                if (row0.includes('turma') || row0.includes('curso')) { targetSheetName = name; foundHeader = true; break; }
-                                if (jsonTest.length > 1) {
-                                    const row1 = jsonTest[1].map(c => String(c).toLowerCase());
-                                    if (row1.includes('turma') || row1.includes('curso')) { targetSheetName = name; foundHeader = true; break; }
-                                }
-                            }
-                        }
+                        
                         const ws = wb.Sheets[targetSheetName];
                         const jsonData = XLSX.utils.sheet_to_json(ws, { header: 1 });
-                        const newRows = [];
-                        let colMap = { id: 0, curso: 1, analista: 2, alunos: 3, inicio: 4, termino: 5, i1: 6, i2: 7, dt: 8 };
-                        let startRow = 1;
-                        if (foundHeader) {
-                             const r0 = jsonData[0] ? jsonData[0].map(s=>String(s).toLowerCase()) : [];
-                             if (!r0.includes('turma') && jsonData[1]) startRow = 2;
+                        
+                        let headerRowIndex = 0;
+                        let headerRow = jsonData[0] || [];
+                        
+                        for(let r=0; r<Math.min(jsonData.length, 5); r++) {
+                            const rowStr = jsonData[r].map(c => String(c).toLowerCase()).join(' ');
+                            if(rowStr.includes('turma') && rowStr.includes('curso')) {
+                                headerRowIndex = r;
+                                headerRow = jsonData[r];
+                                break;
+                            }
                         }
-                        const safeString = (val) => {
-                            if (val === null || val === undefined) return '';
-                            if (val instanceof Date) return val.toLocaleDateString('pt-BR');
-                            if (typeof val === 'object') return JSON.stringify(val); 
-                            return String(val).trim();
+
+                        const map = {
+                            id: -1, curso: -1, analista: -1, alunos: -1, inicio: -1, termino: -1, 
+                            i1: -1, i2: -1, dt: -1
                         };
-                        for(let i=startRow; i<jsonData.length; i++) {
+
+                        headerRow.forEach((cell, idx) => {
+                            const val = String(cell).toLowerCase().trim();
+                            if(val === 'turma') map.id = idx;
+                            else if(val === 'curso') map.curso = idx;
+                            else if(val === 'analista') map.analista = idx;
+                            else if(val === 'alunos' || val === 'total') map.alunos = idx;
+                            else if(val.includes('início') || val === 'inicio') map.inicio = idx;
+                            else if(val.includes('término') || val === 'termino') map.termino = idx;
+                            else if(val.includes('instrutor 1')) map.i1 = idx;
+                            else if(val.includes('instrutor 2') && map.i2 === -1) map.i2 = idx;
+                            else if(val.includes('transferência') || val.includes('transferencia')) map.dt = idx;
+                        });
+
+                        if (map.id === -1) map.id = 0;
+                        if (map.curso === -1) map.curso = 1;
+                        if (map.analista === -1) map.analista = 2;
+                        if (map.alunos === -1) map.alunos = 3;
+                        if (map.inicio === -1) map.inicio = 4;
+                        if (map.termino === -1) map.termino = 5;
+                        if (map.i1 === -1) map.i1 = 6;
+                        if (map.i2 === -1) map.i2 = 7; 
+                        if (map.dt === -1) map.dt = 8; 
+                        
+                        const newRows = [];
+                        for(let i = headerRowIndex + 1; i < jsonData.length; i++) {
                             const row = jsonData[i];
-                            if(row && (row[colMap.id] || row[colMap.curso])) {
-                                let dtTransfer = safeDate(row[colMap.dt]);
-                                if (!dtTransfer) {
-                                    for(let k=8; k<25; k++) {
-                                        const candidate = safeDate(row[k]);
-                                        if (candidate) { dtTransfer = candidate; break; }
-                                    }
+                            if(row && (row[map.id] || row[map.curso])) {
+                                let dtTransfer = safeDate(row[map.dt]);
+                                let i2Name = safeString(row[map.i2]);
+                                if (i2Name.match(/\d{4}-\d{2}-\d{2}/) || i2Name.match(/\d{2}\/\d{2}/)) {
+                                    i2Name = ''; 
                                 }
+
                                 newRows.push({
-                                    id: safeString(row[colMap.id]) || `S/ID-${i}`,
-                                    curso: safeString(row[colMap.curso]) || 'Não Inf.',
-                                    analista: safeString(row[colMap.analista]),
-                                    alunos: parseInt(row[colMap.alunos]) || 0, 
-                                    inicio: safeDate(row[colMap.inicio]),
-                                    termino: safeDate(row[colMap.termino]),
-                                    instrutor1: safeString(row[colMap.i1]),
-                                    instrutor2: safeString(row[colMap.i2]),
+                                    id: safeString(row[map.id]),
+                                    curso: safeString(row[map.curso]),
+                                    analista: safeString(row[map.analista]),
+                                    alunos: parseInt(row[map.alunos]) || 0, 
+                                    inicio: safeDate(row[map.inicio]),
+                                    termino: safeDate(row[map.termino]),
+                                    instrutor1: safeString(row[map.i1]),
+                                    instrutor2: i2Name,
                                     dataTransferencia: dtTransfer
                                 });
                             }
                         }
-                        const subRows = [];
-                        for(let name of wb.SheetNames) {
-                            if (name.toLowerCase().includes('subst')) {
-                                const wsSub = wb.Sheets[name];
-                                const jsonSub = XLSX.utils.sheet_to_json(wsSub, { header: 1 });
-                                for(let i=1; i<jsonSub.length; i++) {
-                                    const row = jsonSub[i];
-                                    if(row && row[0]) {
-                                        let d = row[0];
-                                        if (d instanceof Date) d = d.toISOString().split('T')[0];
-                                        subRows.push({
-                                            data: d,
-                                            turmaId: safeString(row[1]),
-                                            instrutorAusente: safeString(row[2]),
-                                            instrutorSubstituto: safeString(row[3]),
-                                            motivo: safeString(row[4]),
-                                            status: safeString(row[5]) || 'Pendente'
-                                        });
-                                    }
-                                }
-                            }
+                        
+                        if (newRows.length > 0) { 
+                            setData(newRows); 
+                            alert(`Importação concluída! ${newRows.length} turmas carregadas.`); 
+                        } else {
+                            alert("Nenhum dado válido encontrado.");
                         }
-                        if (newRows.length > 0) { setData(newRows); setSubstitutions(subRows); alert(`Importação concluída!`); }
-                    } catch (err) { alert("Erro ao ler o arquivo."); }
+                    } catch (err) { console.error(err); alert("Erro ao ler o arquivo."); }
                 };
                 reader.readAsArrayBuffer(file);
                 e.target.value = null; 
@@ -430,30 +480,55 @@
             const handleExport = () => {
                 try {
                     const wb = XLSX.utils.book_new();
+                    
                     const exportRows = data.map(row => {
                         const today = new Date(); today.setHours(0,0,0,0);
                         let currInst = row.instrutor1;
                         let st = 'Ativo';
+                        
+                        // Lógica de Status (AJUSTADA PARA FINALIZADO)
                         try {
-                            if (row.termino) { const t = new Date(row.termino+'T00:00:00'); if (!isNaN(t) && today > t) st = 'Concluída'; }
-                            if (st !== 'Concluída' && row.instrutor2 && row.dataTransferencia) {
+                            if (row.termino) { 
+                                const t = new Date(row.termino+'T00:00:00'); 
+                                if (!isNaN(t) && today > t) st = 'Finalizado'; 
+                            }
+                            if (st !== 'Finalizado' && row.instrutor2 && row.dataTransferencia) {
                                 const tf = new Date(row.dataTransferencia+'T00:00:00');
                                 if (!isNaN(tf) && today >= tf) currInst = row.instrutor2;
                             }
                         } catch(e) {}
-                        return [row.id, row.curso, row.analista, row.alunos, row.inicio, row.termino, row.instrutor1, row.instrutor2, row.dataTransferencia, currInst, st];
+
+                        return [
+                            row.id, 
+                            row.curso, 
+                            row.analista, 
+                            row.alunos, 
+                            formatDatePTBR(row.inicio),   
+                            formatDatePTBR(row.termino),  
+                            row.instrutor1, 
+                            row.instrutor2,               
+                            formatDatePTBR(row.dataTransferencia), 
+                            currInst, 
+                            st
+                        ];
                     });
-                    const ws = XLSX.utils.aoa_to_sheet([['Turma', 'Curso', 'Analista', 'Alunos', 'Início', 'Término', 'Instrutor 1', 'Instrutor 2', 'Data Transferência', 'Resp. Atual', 'Status'], ...exportRows]);
+                    
+                    const ws = XLSX.utils.aoa_to_sheet([
+                        ['Turma', 'Curso', 'Analista', 'Alunos', 'Início', 'Término', 'Instrutor 1', 'Instrutor 2', 'Data Transferência', 'Resp. Atual', 'Status'], 
+                        ...exportRows
+                    ]);
+                    
                     XLSX.utils.book_append_sheet(wb, ws, "Base de Turmas");
-                    const subExportRows = substitutions.map(s => [s.data, s.turmaId, s.instrutorAusente, s.instrutorSubstituto, s.motivo, s.status]);
+                    
+                    const subExportRows = substitutions.map(s => [formatDatePTBR(s.data), s.turmaId, s.instrutorAusente, s.instrutorSubstituto, s.motivo, s.status]);
                     const wsSub = XLSX.utils.aoa_to_sheet([['Data', 'Turma ID', 'Instrutor Ausente', 'Instrutor Substituto', 'Motivo', 'Status'], ...subExportRows]);
                     XLSX.utils.book_append_sheet(wb, wsSub, "Substituicoes");
+                    
                     XLSX.writeFile(wb, "Senac_Gestao_Turmas.xlsx");
                 } catch (err) { alert("Erro ao exportar: " + err.message); }
             };
 
             useEffect(() => {
-                // ... lógica de substituição de ausência ...
                 if (newSub.turmaId && newSub.data) {
                     const turma = processedData.find(t => t.id === newSub.turmaId);
                     if (turma) {
@@ -475,7 +550,6 @@
                 }
             }, [newSub.turmaId, newSub.data, processedData]);
 
-            // Handlers simples
             const handleAddClass = (e) => { e.preventDefault(); setData([...data, { ...newClass }]); setIsFormOpen(false); alert("Turma adicionada!"); };
             const handleAddSub = (e) => { e.preventDefault(); setSubstitutions([...substitutions, { ...newSub, status: 'Pendente' }]); setIsSubModalOpen(false); alert("Substituição agendada!"); };
             
@@ -558,10 +632,29 @@
                     </nav>
 
                     <main className="max-w-7xl mx-auto px-4 py-8">
-                        {/* ALERTAS */}
                         {urgentSubs.length > 0 && (
                             <div className="bg-white border-l-4 border-red-500 p-4 mb-8 rounded-lg shadow-lg fade-in alert-pulse ring-1 ring-red-100">
-                                {/* ... código de alerta existente ... */}
+                                <div className="flex justify-between items-start">
+                                    <div>
+                                        <h3 className="font-bold text-red-800 text-lg flex items-center gap-2"><Icons.Clock /> Substituições para Hoje/Amanhã</h3>
+                                        <p className="text-red-600 text-sm">Confirme as trocas para efetivar no sistema.</p>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-3">
+                                    {urgentSubs.map((sub, idx) => (
+                                        <div key={idx} className="bg-red-50 p-3 rounded border border-red-200 flex flex-col gap-2">
+                                            <div className="flex justify-between items-center text-sm font-bold text-gray-700">
+                                                <span>{sub.data}</span>
+                                                <span className="bg-white px-2 rounded text-xs border">Turma {sub.turmaId}</span>
+                                            </div>
+                                            <div className="flex items-center justify-between text-sm">
+                                                <span className="text-red-600 font-semibold">{sub.instrutorAusente}</span>
+                                                <span className="text-gray-400">➔</span>
+                                                <span className="text-green-700 font-bold">{sub.instrutorSubstituto}</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         )}
 
@@ -573,24 +666,80 @@
 
                         {activeTab === 'dashboard' && (
                             <div className="fade-in">
-                                {/* ... filtros existentes ... */}
-                                <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-8 flex flex-col md:flex-row gap-4 items-end">
-                                    <div className="flex-1 w-full">
+                                {/* FILTROS */}
+                                <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-8 grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                                    <div>
                                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Filtrar por Instrutor</label>
                                         <select value={filters.instrutor} onChange={e => setFilters({...filters, instrutor: e.target.value})} className="w-full p-2 bg-gray-50 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
                                             <option value="">Todos os Instrutores</option>
                                             {uniqueInstrutores.map(i => <option key={i} value={i}>{i}</option>)}
                                         </select>
                                     </div>
-                                    <div className="flex-1 w-full">
+                                    <div>
                                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Filtrar por Analista</label>
                                         <select value={filters.analista} onChange={e => setFilters({...filters, analista: e.target.value})} className="w-full p-2 bg-gray-50 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
                                             <option value="">Todos os Analistas</option>
                                             {uniqueAnalistas.map(a => <option key={a} value={a}>{a}</option>)}
                                         </select>
                                     </div>
-                                    <div className="pb-2 text-sm text-gray-400 font-mono">{filteredData.length} registros</div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Filtrar por Curso</label>
+                                        <select value={filters.curso} onChange={e => setFilters({...filters, curso: e.target.value})} className="w-full p-2 bg-gray-50 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                                            <option value="">Todos os Cursos</option>
+                                            {uniqueCursos.map(c => <option key={c} value={c}>{c}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Buscar Turma (ID)</label>
+                                        <input list="turmas-list" value={filters.turma} onChange={e => setFilters({...filters, turma: e.target.value})} placeholder="Digite o ID da Turma..." className="w-full p-2 bg-gray-50 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+                                        <datalist id="turmas-list">
+                                            {uniqueTurmas.map(t => <option key={t} value={t} />)}
+                                        </datalist>
+                                    </div>
                                 </div>
+                                
+                                <div className="text-right pb-2 text-sm text-gray-400 font-mono">{filteredData.length} registros filtrados</div>
+
+                                {/* DETALHE DA TURMA (SELECIONADA) */}
+                                {selectedClassDetail && (
+                                    <div className={`mb-8 border rounded-xl p-6 shadow-md fade-in ${selectedClassDetail.isFinished ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200'}`}>
+                                        <div className="flex justify-between items-start mb-4">
+                                            <div>
+                                                <h3 className={`text-2xl font-bold flex items-center gap-2 ${selectedClassDetail.isFinished ? 'text-red-900' : 'text-blue-900'}`}>
+                                                    <Icons.BookOpen /> Turma {selectedClassDetail.id}
+                                                    {selectedClassDetail.isFinished && <span className="bg-red-600 text-white text-xs px-2 py-1 rounded uppercase ml-2">Finalizado</span>}
+                                                </h3>
+                                                <p className={`${selectedClassDetail.isFinished ? 'text-red-700' : 'text-blue-700'} font-medium`}>{selectedClassDetail.curso}</p>
+                                            </div>
+                                            <span className={`bg-white px-3 py-1 rounded-full text-xs font-bold border ${selectedClassDetail.isFinished ? 'border-red-200 text-red-600' : 'border-blue-200 text-blue-600'}`}>
+                                                Analista: {selectedClassDetail.analista}
+                                            </span>
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                            <div className="bg-white p-4 rounded-lg border border-gray-100">
+                                                <p className="text-xs text-gray-500 uppercase font-bold mb-1">Instrutor Titular (1)</p>
+                                                <p className="text-lg font-bold text-gray-800">{selectedClassDetail.instrutor1}</p>
+                                                <p className="text-xs text-gray-400 mt-1">Início: {selectedClassDetail.inicio ? formatDatePTBR(selectedClassDetail.inicio) : '-'}</p>
+                                            </div>
+                                            <div className="bg-white p-4 rounded-lg border border-gray-100 flex flex-col justify-center items-center">
+                                                <div className="text-2xl text-blue-300">➔</div>
+                                                <p className="text-xs font-bold text-blue-600 mt-1">Transição: {selectedClassDetail.dataTransferencia ? formatDatePTBR(selectedClassDetail.dataTransferencia) : 'Não agendada'}</p>
+                                            </div>
+                                            <div className="bg-white p-4 rounded-lg border border-gray-100">
+                                                <p className="text-xs text-gray-500 uppercase font-bold mb-1">Instrutor Secundário (2)</p>
+                                                <p className={`text-lg font-bold ${selectedClassDetail.instrutor2 ? 'text-gray-800' : 'text-red-400 italic'}`}>
+                                                    {selectedClassDetail.instrutor2 || 'Pendente'}
+                                                </p>
+                                                <p className="text-xs text-gray-400 mt-1">Início Estimado: {getNextWorkingDay(selectedClassDetail.dataTransferencia) || '-'}</p>
+                                            </div>
+                                        </div>
+                                        <div className={`mt-4 pt-4 border-t text-center ${selectedClassDetail.isFinished ? 'border-red-200' : 'border-blue-200'}`}>
+                                            <p className={`text-sm font-bold ${selectedClassDetail.isFinished ? 'text-red-800' : 'text-blue-800'}`}>
+                                                Responsável Hoje: <span className="bg-yellow-300 px-2 py-0.5 rounded text-yellow-900">{selectedClassDetail.instrutorAtual}</span>
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
 
                                 <Charts />
                                 <h2 className="text-xl font-bold text-gray-800 mb-4 border-l-4 border-orange-500 pl-3">Visão Geral dos Instrutores</h2>
@@ -598,7 +747,8 @@
                                     {instructorStats.filter(i => {
                                         const matchInst = filters.instrutor === '' || i.nome === filters.instrutor;
                                         const matchAnalista = filters.analista === '' || i.analistas.includes(filters.analista);
-                                        return matchInst && matchAnalista;
+                                        const matchCurso = filters.curso === '' || (i.cursos[filters.curso] > 0);
+                                        return matchInst && matchAnalista && matchCurso;
                                     }).map(inst => (
                                         <div key={inst.nome} className={`bg-white rounded-xl shadow-sm border-2 p-5 relative transition-card ${inst.alert ? 'border-red-400' : 'border-transparent'}`}>
                                             {inst.alert && (
@@ -632,6 +782,23 @@
                                                 </div>
                                             </div>
 
+                                            <div className="border-t border-gray-100 pt-3">
+                                                <p className="text-xs font-bold text-gray-400 uppercase mb-2">Distribuição de Cursos</p>
+                                                <div className="space-y-2 max-h-32 overflow-y-auto pr-1">
+                                                    {Object.entries(inst.cursos).map(([curso, qtd]) => (
+                                                        <div key={curso} className={`flex justify-between text-sm items-center ${filters.curso === curso ? 'bg-yellow-50 font-bold p-1 rounded' : ''}`}>
+                                                            <span className="text-gray-600 truncate w-40" title={curso}>{curso}</span>
+                                                            <div className="flex items-center gap-2">
+                                                                <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                                                    <div className="h-full bg-blue-500" style={{width: `${(qtd/inst.totalTurmas)*100}%`}}></div>
+                                                                </div>
+                                                                <span className="font-mono text-xs font-bold text-gray-500 whitespace-nowrap">{qtd} turmas</span>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+
                                             {/* GESTÃO DE TRANSIÇÃO DENTRO DO CARD */}
                                             {inst.myClasses && inst.myClasses.length > 0 && (
                                                 <div className="border-t border-gray-100 pt-3 mt-2">
@@ -640,13 +807,15 @@
                                                     </p>
                                                     <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
                                                         {inst.myClasses.map(cls => (
-                                                            <div key={cls.id} className="bg-gray-50 p-2 rounded border border-gray-100 text-xs">
+                                                            <div key={cls.id} className={`p-2 rounded border text-xs ${cls.isFinished ? 'bg-red-50 border-red-200 opacity-75' : 'bg-gray-50 border-gray-100'}`}>
                                                                 <div className="flex justify-between font-bold text-gray-700">
-                                                                    <span>Turma {cls.id}</span>
+                                                                    <span className={cls.isFinished ? 'text-red-700' : ''}>
+                                                                        Turma {cls.id} {cls.isFinished && '(Finalizada)'}
+                                                                    </span>
                                                                     <span className="text-blue-600">{cls.curso.substring(0, 15)}...</span>
                                                                 </div>
                                                                 <div className="flex items-center gap-1 text-gray-500 mt-1">
-                                                                    <span>Fim I1: {cls.dataTransferencia ? new Date(cls.dataTransferencia+'T00:00:00').toLocaleDateString('pt-BR') : 'N/A'}</span>
+                                                                    <span>Fim I1: {cls.dataTransferencia ? formatDatePTBR(cls.dataTransferencia) : 'N/A'}</span>
                                                                     <Icons.ArrowRight />
                                                                     <span>Início I2: {getNextWorkingDay(cls.dataTransferencia) || 'N/A'}</span>
                                                                 </div>
@@ -654,7 +823,7 @@
                                                                     <span className="font-semibold text-gray-600">
                                                                         I2: {cls.instrutor2 || <span className="text-red-400 italic">Pendente</span>}
                                                                     </span>
-                                                                    {(!cls.instrutor2 || cls.instrutor2 === '') && cls.dataTransferencia && (
+                                                                    {(!cls.instrutor2 || cls.instrutor2 === '') && cls.dataTransferencia && !cls.isFinished && (
                                                                         <button 
                                                                             onClick={() => {
                                                                                 const best = getRecommendationsFor(cls.curso, inst.nome)[0];
@@ -680,7 +849,6 @@
                         )}
 
                         {activeTab === 'simulator' && (
-                            /* ... simulador ... */
                             <div className="fade-in max-w-4xl mx-auto">
                                 <div className="bg-white rounded-xl shadow-lg border border-blue-100 overflow-hidden mb-8">
                                     <div className="bg-gradient-to-r from-blue-900 to-blue-800 p-6 text-white">
@@ -715,8 +883,8 @@
                                                         <h4 className="font-bold text-gray-800 text-lg">{inst.nome}</h4>
                                                         <div className="flex gap-4 text-xs text-gray-500 mt-1">
                                                             <span>Atual: <strong>{inst.totalAlunos}</strong> alunos</span>
-                                                            <span>Turmas deste curso: <strong>{inst.currentCourseCount}</strong></span>
-                                                            <span>Projeção: <strong>{inst.projectedAlunos}</strong></span>
+                                                            <span>Turmas deste curso: <strong>{inst.turmasDesteCurso}</strong></span>
+                                                            <span>Carga Total: <strong>{inst.cargaTotalAlunos}</strong></span>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -759,7 +927,7 @@
                                             <tbody>
                                                 {substitutions.map((sub, idx) => (
                                                     <tr key={idx} className="bg-white border-b hover:bg-gray-50">
-                                                        <td className="px-6 py-4 font-mono">{sub.data}</td>
+                                                        <td className="px-6 py-4 font-mono">{formatDatePTBR(sub.data)}</td>
                                                         <td className="px-6 py-4 font-bold">{sub.turmaId}</td>
                                                         <td className="px-6 py-4 text-red-500 font-medium">{sub.instrutorAusente}</td>
                                                         <td className="px-6 py-4 text-green-600 font-bold bg-green-50">{sub.instrutorSubstituto}</td>
@@ -778,42 +946,46 @@
                     {/* MODAL REDISTRIBUIÇÃO (NOVO) */}
                     {isRedistributionModalOpen && redistributionData && (
                         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm fade-in">
-                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
-                                <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-red-600 text-white rounded-t-2xl">
+                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col">
+                                <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-red-600 text-white rounded-t-2xl flex-shrink-0">
                                     <h3 className="text-xl font-bold flex items-center gap-2"><Icons.Alert /> Redistribuir: {redistributionData.instructor}</h3>
                                     <button onClick={() => setIsRedistributionModalOpen(false)} className="hover:bg-white/20 p-1 rounded-full text-white">✕</button>
                                 </div>
-                                <div className="p-6">
+                                <div className="p-6 flex-1 overflow-y-auto">
                                     <p className="text-gray-600 text-sm mb-4">
-                                        Este instrutor está sobrecarregado. Sugerimos transferir turmas do curso <strong>{redistributionData.course}</strong> para um dos seguintes instrutores, que possuem carga menor e afinidade com o curso:
+                                        Este instrutor está sobrecarregado. Abaixo estão <strong>todos os instrutores</strong>, ordenados pela melhor capacidade de absorver turmas de <strong>{redistributionData.course}</strong>:
                                     </p>
                                     <div className="space-y-3">
                                         {redistributionData.candidates.map((cand, idx) => (
                                             <div 
                                                 key={cand.nome} 
                                                 onClick={() => applyRedistribution(cand)}
-                                                className="border border-gray-200 rounded-lg p-3 flex justify-between items-center bg-gray-50 hover:bg-blue-50 transition cursor-pointer"
+                                                className={`border rounded-lg p-3 flex justify-between items-center transition cursor-pointer hover:shadow-md ${idx < 3 ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-white'}`}
                                             >
                                                 <div className="flex items-center gap-3">
-                                                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${idx===0 ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}`}>#{idx+1}</span>
+                                                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${idx < 3 ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}`}>#{idx+1}</span>
                                                     <div>
                                                         <p className="font-bold text-gray-800">{cand.nome}</p>
-                                                        <p className="text-xs text-gray-500">Carga Atual: {cand.totalAlunos} | Afinidade: {cand.affinityCount} turmas</p>
+                                                        <p className="text-xs text-gray-500">
+                                                            {cand.turmasDesteCurso} turmas de {redistributionData.course} | Total Alunos: {cand.cargaTotalAlunos}
+                                                        </p>
                                                     </div>
                                                 </div>
-                                                <button className="px-3 py-1 bg-white border border-blue-200 text-blue-600 text-xs font-bold rounded hover:bg-blue-600 hover:text-white transition">Selecionar</button>
+                                                <button className={`px-3 py-1 border text-xs font-bold rounded transition ${idx < 3 ? 'bg-white border-green-200 text-green-700 hover:bg-green-600 hover:text-white' : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-600 hover:text-white'}`}>
+                                                    Selecionar
+                                                </button>
                                             </div>
                                         ))}
                                     </div>
-                                    <div className="mt-6 pt-4 border-t border-gray-100 text-center">
-                                        <button onClick={() => setIsRedistributionModalOpen(false)} className="text-sm text-gray-500 underline hover:text-gray-800">Fechar Janela</button>
-                                    </div>
+                                </div>
+                                <div className="p-4 border-t border-gray-100 text-center flex-shrink-0">
+                                    <button onClick={() => setIsRedistributionModalOpen(false)} className="text-sm text-gray-500 underline hover:text-gray-800">Fechar Janela</button>
                                 </div>
                             </div>
                         </div>
                     )}
-
-                    {/* MODAL NOVA TURMA */}
+                    
+                    {/* ... (Modais de Nova Turma e Substituição mantidos iguais) ... */}
                     {isFormOpen && (
                         /* ... código modal turma ... */
                         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm fade-in">
@@ -892,9 +1064,7 @@
                         </div>
                     )}
 
-                    {/* MODAL NOVA SUBSTITUIÇÃO */}
                     {isSubModalOpen && (
-                        /* ... código modal substituição ... */
                         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm fade-in">
                             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
                                 <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-purple-700 text-white rounded-t-2xl">
