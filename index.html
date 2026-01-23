@@ -32,8 +32,41 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo, useRef } = React;
+        const { useState, useEffect, useMemo, useRef, Component } = React;
         
+        // --- ERROR BOUNDARY (Evita tela branca) ---
+        class ErrorBoundary extends Component {
+            constructor(props) {
+                super(props);
+                this.state = { hasError: false, error: null };
+            }
+            static getDerivedStateFromError(error) {
+                return { hasError: true, error };
+            }
+            componentDidCatch(error, errorInfo) {
+                console.error("Erro no Dashboard:", error, errorInfo);
+            }
+            render() {
+                if (this.state.hasError) {
+                    return (
+                        <div className="min-h-screen flex items-center justify-center bg-red-50 p-4">
+                            <div className="bg-white p-8 rounded-xl shadow-xl max-w-lg text-center">
+                                <h1 className="text-2xl font-bold text-red-600 mb-4">Ops! Algo deu errado.</h1>
+                                <p className="text-gray-600 mb-4">Ocorreu um erro ao processar os dados. Isso geralmente acontece com arquivos Excel muito complexos ou corrompidos.</p>
+                                <div className="bg-gray-100 p-3 rounded text-left text-xs font-mono overflow-auto max-h-32 mb-4">
+                                    {this.state.error && this.state.error.toString()}
+                                </div>
+                                <button onClick={() => window.location.reload()} className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-blue-700">
+                                    Recarregar Página
+                                </button>
+                            </div>
+                        </div>
+                    );
+                }
+                return this.props.children;
+            }
+        }
+
         // --- ÍCONES ---
         const Icons = {
             Users: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>,
@@ -50,7 +83,6 @@
             Clock: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
         };
 
-        // Dados de Exemplo para não iniciar vazio
         const MOCK_DATA = [
             { id: '202500029', curso: 'Administrativo', analista: 'Bianca', alunos: 31, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Sheila', instrutor2: 'Bruna', dataTransferencia: '2026-02-04' },
             { id: '202500118', curso: 'Administrativo', analista: 'Bianca', alunos: 31, inicio: '2025-02-17', termino: '2026-02-11', instrutor1: 'Bruna', instrutor2: 'Jaqueline', dataTransferencia: '2026-02-04' },
@@ -101,7 +133,6 @@
                 const today = new Date();
                 today.setHours(0,0,0,0);
 
-                // Mapeia e protege contra linhas vazias ou corrompidas
                 return data.map(row => {
                     if (!row) return null;
 
@@ -109,7 +140,6 @@
                     let status = 'Ativo';
                     let isFinished = false;
 
-                    // Tratamento seguro de datas
                     try {
                         if (row.termino) {
                             const terminoDate = new Date(row.termino + 'T00:00:00');
@@ -134,7 +164,7 @@
                     if (!currentInstructor || String(currentInstructor).trim() === '') currentInstructor = 'Não Atribuído';
 
                     return { ...row, instrutorAtual: currentInstructor, status, isFinished };
-                }).filter(Boolean); // Remove nulos gerados por erros
+                }).filter(Boolean);
             }, [data]);
 
             // --- 2. DETECÇÃO DE SUBSTITUIÇÕES URGENTES (Hoje/Amanhã) ---
@@ -187,7 +217,6 @@
                     
                     if (!stats[inst]) stats[inst] = { nome: inst, totalAlunos: 0, totalTurmas: 0, analistas: new Set(), cursos: {} };
                     
-                    // Proteção contra NaN
                     const qtdAlunos = parseInt(row.alunos);
                     stats[inst].totalAlunos += isNaN(qtdAlunos) ? 0 : qtdAlunos;
                     stats[inst].totalTurmas += 1;
@@ -228,7 +257,7 @@
                 return [...new Set(processedData.map(d => d.analista))].filter(Boolean).sort();
             }, [processedData]);
 
-            // --- 4. UPLOAD ROBUSTO (SEM TELA BRANCA) ---
+            // --- 4. UPLOAD SUPER ROBUSTO ---
             const handleFileUpload = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
@@ -237,60 +266,105 @@
                 reader.onload = (evt) => {
                     try {
                         const dataBuffer = evt.target.result;
-                        // Leitura segura como ArrayBuffer
                         const wb = XLSX.read(dataBuffer, { type: 'array', cellDates: true });
                         
-                        // Aba 1: Turmas
-                        const ws = wb.Sheets[wb.SheetNames[0]];
+                        // 4.1 Encontrar a aba correta (Procura por "Turma" ou "Curso" na primeira linha)
+                        let targetSheetName = wb.SheetNames[0];
+                        let foundHeader = false;
+
+                        for(let name of wb.SheetNames) {
+                            const wsTest = wb.Sheets[name];
+                            // Lê apenas as primeiras linhas para checar
+                            const jsonTest = XLSX.utils.sheet_to_json(wsTest, { header: 1, range: 0, limit: 5 });
+                            if (jsonTest.length > 0) {
+                                const row0 = jsonTest[0].map(c => String(c).toLowerCase());
+                                if (row0.includes('turma') || row0.includes('curso')) {
+                                    targetSheetName = name;
+                                    foundHeader = true;
+                                    break;
+                                }
+                                // Tenta linha 2 também (caso tenha título)
+                                if (jsonTest.length > 1) {
+                                    const row1 = jsonTest[1].map(c => String(c).toLowerCase());
+                                    if (row1.includes('turma') || row1.includes('curso')) {
+                                        targetSheetName = name;
+                                        foundHeader = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        console.log("Aba detectada:", targetSheetName);
+
+                        const ws = wb.Sheets[targetSheetName];
                         const jsonData = XLSX.utils.sheet_to_json(ws, { header: 1 });
                         const newRows = [];
                         
-                        // Pula cabeçalho (i=1)
-                        for(let i=1; i<jsonData.length; i++) {
+                        // Parser de data seguro
+                        const safeDate = (val) => {
+                            if (!val) return '';
+                            if (val instanceof Date) return val.toISOString().split('T')[0];
+                            const str = String(val).trim();
+                            if (str.length < 8) return ''; 
+                            if (str.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+                                const [dd,mm,yyyy] = str.split('/');
+                                return `${yyyy}-${mm}-${dd}`;
+                            }
+                            if (str.match(/^\d{4}-\d{2}-\d{2}$/)) return str;
+                            return '';
+                        };
+
+                        // 4.2 Processamento
+                        // Tenta descobrir o index das colunas dinamicamente se achou cabeçalho
+                        let colMap = { id: 0, curso: 1, analista: 2, alunos: 3, inicio: 4, termino: 5, i1: 6, i2: 7, dt: 8 };
+                        let startRow = 1;
+
+                        if (foundHeader) {
+                            // Re-lê para pegar o header exato
+                             // Simplificando: vamos assumir a estrutura fixa se não tiver certeza, 
+                             // mas se achou header, tenta ajustar o startRow
+                             // Lógica simplificada: Se linha 0 tem "Turma", dados começam na 1.
+                             // Se linha 1 tem "Turma", dados começam na 2.
+                             const r0 = jsonData[0] ? jsonData[0].map(s=>String(s).toLowerCase()) : [];
+                             if (!r0.includes('turma') && jsonData[1]) startRow = 2;
+                        }
+
+                        for(let i=startRow; i<jsonData.length; i++) {
                             const row = jsonData[i];
-                            // Verifica se linha existe e tem pelo menos ID ou Curso
-                            if(row && (row[0] || row[1])) {
-                                // Parser de data ultra-seguro
-                                const safeDate = (val) => {
-                                    if (!val) return '';
-                                    if (val instanceof Date) return val.toISOString().split('T')[0];
-                                    
-                                    const str = String(val).trim();
-                                    // Ignora lixo como "OK", "X", "1"
-                                    if (str.length < 8) return '';
-                                    
-                                    // Tenta DD/MM/YYYY
-                                    if (str.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
-                                        const [dd,mm,yyyy] = str.split('/');
-                                        return `${yyyy}-${mm}-${dd}`;
+                            if(row && (row[colMap.id] || row[colMap.curso])) {
+                                // Tenta achar data de transferência inteligente (se col 8 não for data)
+                                let dtTransfer = safeDate(row[colMap.dt]);
+                                if (!dtTransfer) {
+                                    // Heurística: procura primeira data válida da coluna 8 até 25
+                                    for(let k=8; k<25; k++) {
+                                        const candidate = safeDate(row[k]);
+                                        if (candidate) {
+                                            dtTransfer = candidate;
+                                            break;
+                                        }
                                     }
-                                    // Tenta YYYY-MM-DD
-                                    if (str.match(/^\d{4}-\d{2}-\d{2}$/)) return str;
-                                    
-                                    return '';
-                                };
+                                }
 
                                 newRows.push({
-                                    id: row[0] || `S/ID-${i}`,
-                                    curso: row[1] || 'Não Inf.',
-                                    analista: row[2] || '',
-                                    alunos: parseInt(row[3]) || 0, // Garante número
-                                    inicio: safeDate(row[4]),
-                                    termino: safeDate(row[5]),
-                                    instrutor1: row[6] || '',
-                                    instrutor2: row[7] || '',
-                                    dataTransferencia: safeDate(row[8]) // Coluna I
+                                    id: row[colMap.id] || `S/ID-${i}`,
+                                    curso: row[colMap.curso] || 'Não Inf.',
+                                    analista: row[colMap.analista] || '',
+                                    alunos: parseInt(row[colMap.alunos]) || 0, 
+                                    inicio: safeDate(row[colMap.inicio]),
+                                    termino: safeDate(row[colMap.termino]),
+                                    instrutor1: row[colMap.i1] || '',
+                                    instrutor2: row[colMap.i2] || '',
+                                    dataTransferencia: dtTransfer
                                 });
                             }
                         }
 
-                        // Aba 2: Substituições (se existir)
+                        // Aba Substituições
                         const subRows = [];
-                        if (wb.SheetNames.length > 1) {
-                            const wsSubName = wb.SheetNames[1];
-                            // Tenta encontrar aba de substituições
-                            if (wsSubName.toLowerCase().includes('sub') || wb.SheetNames.length === 2) {
-                                const wsSub = wb.Sheets[wsSubName];
+                        for(let name of wb.SheetNames) {
+                            if (name.toLowerCase().includes('subst')) {
+                                const wsSub = wb.Sheets[name];
                                 const jsonSub = XLSX.utils.sheet_to_json(wsSub, { header: 1 });
                                 for(let i=1; i<jsonSub.length; i++) {
                                     const row = jsonSub[i];
@@ -313,14 +387,14 @@
                         if (newRows.length > 0) {
                             setData(newRows);
                             setSubstitutions(subRows);
-                            alert(`Importação concluída!\nTurmas: ${newRows.length}\nSubstituições: ${subRows.length}`);
+                            alert(`Importação concluída!\nTurmas carregadas: ${newRows.length}\nSubstituições: ${subRows.length}`);
                         } else {
-                            alert("O arquivo parece vazio ou inválido. Verifique se é a planilha correta.");
+                            alert("Não foi possível encontrar dados de turmas. Verifique se a planilha tem colunas 'Turma' ou 'Curso'.");
                         }
 
                     } catch (err) {
                         console.error(err);
-                        alert("Erro grave ao processar o arquivo. Verifique se não está corrompido.");
+                        alert("Erro ao ler o arquivo. Tente salvar como .xlsx simples se persistir.");
                     }
                 };
                 reader.readAsArrayBuffer(file);
@@ -330,14 +404,11 @@
             const handleExport = () => {
                 try {
                     const wb = XLSX.utils.book_new();
-                    
-                    // 1. Aba Turmas
                     const headers = ['Turma', 'Curso', 'Analista', 'Alunos', 'Início', 'Término', 'Instrutor 1', 'Instrutor 2', 'Data Transferência', 'Resp. Atual', 'Status'];
                     const exportRows = data.map(row => {
                         const today = new Date(); today.setHours(0,0,0,0);
                         let currInst = row.instrutor1;
                         let st = 'Ativo';
-                        // Recalcula status visual
                         try {
                             if (row.termino) {
                                 const t = new Date(row.termino+'T00:00:00');
@@ -354,7 +425,6 @@
                     const ws = XLSX.utils.aoa_to_sheet(wsData);
                     XLSX.utils.book_append_sheet(wb, ws, "Base de Turmas");
 
-                    // 2. Aba Substituições
                     const subHeaders = ['Data', 'Turma ID', 'Instrutor Ausente', 'Instrutor Substituto', 'Motivo', 'Status'];
                     const subExportRows = substitutions.map(s => [s.data, s.turmaId, s.instrutorAusente, s.instrutorSubstituto, s.motivo, s.status]);
                     const wsSubData = [subHeaders, ...subExportRows];
@@ -362,39 +432,27 @@
                     XLSX.utils.book_append_sheet(wb, wsSub, "Substituicoes");
 
                     XLSX.writeFile(wb, "Senac_Gestao_Turmas.xlsx");
-                } catch (err) {
-                    alert("Erro ao exportar arquivo: " + err.message);
-                }
+                } catch (err) { alert("Erro ao exportar: " + err.message); }
             };
 
-            // Sugestão Automática de Substituto
             useEffect(() => {
                 if (newSub.turmaId && newSub.data) {
                     const turma = processedData.find(t => t.id === newSub.turmaId);
                     if (turma) {
-                        // Descobre titular na data
                         const subDate = new Date(newSub.data + 'T00:00:00');
                         let titularNaData = turma.instrutor1;
                         if (turma.instrutor2 && turma.dataTransferencia) {
                             const transfDate = new Date(turma.dataTransferencia + 'T00:00:00');
                             if (subDate >= transfDate) titularNaData = turma.instrutor2;
                         }
-                        
-                        // Sugere o outro instrutor
                         let sugestao = '';
                         if (titularNaData === turma.instrutor1 && turma.instrutor2) sugestao = turma.instrutor2;
                         else if (titularNaData === turma.instrutor2 && turma.instrutor1) sugestao = turma.instrutor1;
-
-                        setNewSub(prev => ({
-                            ...prev,
-                            instrutorAusente: titularNaData,
-                            instrutorSubstituto: prev.instrutorSubstituto || sugestao 
-                        }));
+                        setNewSub(prev => ({ ...prev, instrutorAusente: titularNaData, instrutorSubstituto: prev.instrutorSubstituto || sugestao }));
                     }
                 }
             }, [newSub.turmaId, newSub.data, processedData]);
 
-            // Handlers de Formulários
             const handleAddClass = (e) => {
                 e.preventDefault();
                 setData([...data, { ...newClass }]);
@@ -410,7 +468,6 @@
                 alert("Substituição agendada!");
             };
 
-            // Simulador
             const handleSimulate = () => {
                 if (!simData.curso || !simData.alunos) return;
                 const scores = instructorStats.map(inst => {
@@ -431,20 +488,15 @@
                 setIsFormOpen(true);
             };
 
-
-            // --- COMPONENTES VISUAIS ---
             const Charts = () => {
                 if (!window.Recharts) return <div className="p-4 bg-gray-100 rounded text-center">Carregando gráficos...</div>;
                 const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } = window.Recharts;
-                
-                // Prepara dados seguros para gráfico (sem NaN)
                 const chartStats = useMemo(() => {
                     const stats = {};
                     filteredData.forEach(row => {
                         if (row.isFinished || row.instrutorAtual === 'Não Atribuído') return;
                         const inst = row.instrutorAtual;
                         if (!stats[inst]) stats[inst] = { nome: inst, totalAlunos: 0, totalTurmas: 0 };
-                        // Garante numérico
                         stats[inst].totalAlunos += (parseInt(row.alunos) || 0);
                         stats[inst].totalTurmas += 1;
                     });
@@ -482,6 +534,7 @@
             };
 
             return (
+                <ErrorBoundary>
                 <div className="min-h-screen pb-20">
                     <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".csv,.xlsx,.xls,.xlsm" className="hidden" />
 
@@ -897,6 +950,7 @@
                         </div>
                     )}
                 </div>
+                </ErrorBoundary>
             );
         }
 
