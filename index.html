@@ -29,6 +29,10 @@
         .clickable-badge:hover { transform: scale(1.05); cursor: pointer; }
         .transition-card { transition: all 0.3s ease; }
         .transition-card:hover { transform: translateY(-2px); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); }
+        
+        /* Estilos específicos para separação de turmas */
+        .section-header { display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; font-weight: 800; text-transform: uppercase; margin-bottom: 0.5rem; letter-spacing: 0.05em; }
+        .section-line { flex: 1; height: 1px; background-color: #e2e8f0; }
     </style>
 </head>
 <body>
@@ -83,7 +87,8 @@
             Clock: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
             Bulb: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>,
             ArrowRight: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>,
-            Refresh: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+            Refresh: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>,
+            External: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
         };
 
         const MOCK_DATA = [
@@ -125,6 +130,8 @@
             const [simData, setSimData] = useState({ curso: 'Administrativo', alunos: 30 });
             const [recommendations, setRecommendations] = useState(null);
             const [urgentSubs, setUrgentSubs] = useState([]);
+            
+            const [currentRecommendedInst, setCurrentRecommendedInst] = useState('');
 
             const fileInputRef = useRef(null);
 
@@ -180,7 +187,6 @@
                         if (!isFinished && row.instrutor2 && row.dataTransferencia) {
                             const transferDate = new Date(row.dataTransferencia + 'T00:00:00'); 
                             if (!isNaN(transferDate.getTime())) {
-                                // Se HOJE for MAIOR que a data de transferência, o bastão já passou
                                 if (today > transferDate) {
                                     currentInstructor = row.instrutor2;
                                     status = 'Transferido';
@@ -201,12 +207,9 @@
                     const date = new Date(dateString + 'T00:00:00');
                     date.setDate(date.getDate() + 1); // Adiciona 1 dia (o dia seguinte)
                     
-                    // Se caiu sábado (6), adiciona +2 para segunda
                     if (date.getDay() === 6) {
                         date.setDate(date.getDate() + 2);
-                    } 
-                    // Se caiu domingo (0), adiciona +1 para segunda
-                    else if (date.getDay() === 0) {
+                    } else if (date.getDay() === 0) {
                         date.setDate(date.getDate() + 1);
                     }
                     
@@ -335,8 +338,6 @@
                     
                     const inst = row.instrutorAtual;
                     
-                    // Inicializa objeto de estatística se não existir
-                    // Adicionamos 'receivedClasses' para rastrear o histórico
                     if (!stats[inst]) stats[inst] = { nome: inst, totalAlunos: 0, totalTurmas: 0, analistas: new Set(), cursos: {}, myClasses: [], receivedClasses: [] };
                     
                     const qtdAlunos = parseInt(row.alunos);
@@ -348,14 +349,12 @@
                     stats[inst].cursos[curso] = (stats[inst].cursos[curso] || 0) + 1;
 
                     // LÓGICA DE RASTREAMENTO:
-                    // Se a turma está "Transferida" E o instrutor atual é o Instrutor 2
-                    // E existe um Instrutor 1 diferente, adicionamos ao "receivedClasses"
                     if (row.status === 'Transferido' && row.instrutor2 === inst && row.instrutor1 && row.instrutor1 !== inst) {
                         stats[inst].receivedClasses.push(row);
                     }
                 });
 
-                // Popula 'myClasses' (Turmas onde ele é o titular original - para gestão de saída)
+                // Popula 'myClasses'
                 processedData.forEach(row => {
                     if (row.instrutor1 && stats[row.instrutor1]) {
                         stats[row.instrutor1].myClasses.push(row);
@@ -420,7 +419,6 @@
                         let headerRowIndex = 0;
                         let headerRow = jsonData[0] || [];
                         
-                        // Tenta achar a linha de cabeçalho
                         for(let r=0; r<Math.min(jsonData.length, 5); r++) {
                             const rowStr = jsonData[r].map(c => String(c).toLowerCase()).join(' ');
                             if(rowStr.includes('turma') && rowStr.includes('curso')) {
@@ -448,7 +446,6 @@
                             else if(val.includes('transferência') || val.includes('transferencia') || val.includes('troca')) map.dt = idx;
                         });
 
-                        // Fallbacks padrão
                         if (map.id === -1) map.id = 0;
                         if (map.curso === -1) map.curso = 1;
                         if (map.analista === -1) map.analista = 2;
@@ -458,22 +455,14 @@
                         if (map.i1 === -1) map.i1 = 6;
                         if (map.i2 === -1) map.i2 = 7; 
                         
-                        // --- DETECÇÃO INTELIGENTE DE DATA DE TRANSFERÊNCIA ---
-                        // Se não achou pelo cabeçalho, procura na primeira linha de dados uma data válida
-                        // que não seja Inicio ou Termino
                         if (map.dt === -1 && jsonData.length > headerRowIndex + 1) {
                             const sampleRow = jsonData[headerRowIndex + 1];
                             for (let j = 6; j < sampleRow.length; j++) {
-                                // Ignora colunas já mapeadas como inicio/termino
                                 if (j === map.inicio || j === map.termino) continue;
-                                
                                 const val = safeDate(sampleRow[j]);
-                                // Se encontrou uma data válida (ex: 2026-...) e está longe das primeiras colunas
                                 if (val && val.length > 5) {
-                                    // Validação extra: não pode ser o nome do instrutor
                                     if (j !== map.i1 && j !== map.i2) {
                                         map.dt = j;
-                                        console.log("Data Transferência detectada na coluna: " + j);
                                         break;
                                     }
                                 }
@@ -506,7 +495,7 @@
                         
                         if (newRows.length > 0) { 
                             setData(newRows); 
-                            alert(`Importação concluída! ${newRows.length} turmas carregadas. Data de Troca detectada na coluna ${map.dt >= 0 ? map.dt + 1 : 'NÃO ENCONTRADA'}`); 
+                            alert(`Importação concluída! ${newRows.length} turmas carregadas.`); 
                         } else {
                             alert("Nenhum dado válido encontrado.");
                         }
@@ -525,7 +514,6 @@
                         let currInst = row.instrutor1;
                         let st = 'Ativo';
                         
-                        // Lógica de Status (AJUSTADA PARA FINALIZADO)
                         try {
                             if (row.termino) { 
                                 const t = new Date(row.termino+'T00:00:00'); 
@@ -533,7 +521,6 @@
                             }
                             if (st !== 'Finalizado' && row.instrutor2 && row.dataTransferencia) {
                                 const tf = new Date(row.dataTransferencia+'T00:00:00');
-                                // Se HOJE > Data Transferência
                                 if (!isNaN(tf) && today > tf) currInst = row.instrutor2;
                             }
                         } catch(e) {}
@@ -593,6 +580,17 @@
             const handleAddClass = (e) => { e.preventDefault(); setData([...data, { ...newClass }]); setIsFormOpen(false); alert("Turma adicionada!"); };
             const handleAddSub = (e) => { e.preventDefault(); setSubstitutions([...substitutions, { ...newSub, status: 'Pendente' }]); setIsSubModalOpen(false); alert("Substituição agendada!"); };
             
+            const handleNewClassCourseChange = (e) => {
+                const selectedCurso = e.target.value;
+                let suggested = '';
+                if (selectedCurso) {
+                    const recs = getRecommendationsFor(selectedCurso, '');
+                    if (recs && recs.length > 0) suggested = recs[0].nome;
+                }
+                setCurrentRecommendedInst(suggested);
+                setNewClass({ ...newClass, curso: selectedCurso, instrutor1: suggested || newClass.instrutor1 });
+            };
+
             const handleSimulate = () => {
                 if (!simData.curso || !simData.alunos) return;
                 const scores = getRecommendationsFor(simData.curso, '').map(inst => ({
@@ -789,7 +787,12 @@
                                         const matchAnalista = filters.analista === '' || i.analistas.includes(filters.analista);
                                         const matchCurso = filters.curso === '' || (i.cursos[filters.curso] > 0);
                                         return matchInst && matchAnalista && matchCurso;
-                                    }).map(inst => (
+                                    }).map(inst => {
+                                        // Filtra turmas ativas vs repassadas para o cartão
+                                        const activeMyClasses = inst.myClasses.filter(c => !c.isFinished && c.status !== 'Transferido');
+                                        const transferredMyClasses = inst.myClasses.filter(c => !c.isFinished && c.status === 'Transferido');
+                                        
+                                        return (
                                         <div key={inst.nome} className={`bg-white rounded-xl shadow-sm border-2 p-5 relative transition-card ${inst.alert ? 'border-red-400' : 'border-transparent'}`}>
                                             {inst.alert && (
                                                 <button 
@@ -839,66 +842,81 @@
                                                 </div>
                                             </div>
 
-                                            {/* SEÇÃO: TURMAS RECEBIDAS (HISTÓRICO DE QUEM ERA O INSTRUTOR 1) */}
-                                            {inst.receivedClasses && inst.receivedClasses.length > 0 && (
-                                                <div className="border-t border-gray-100 pt-3 mt-2">
-                                                    <p className="text-xs font-bold text-blue-600 uppercase mb-2 flex items-center gap-1">
-                                                        <Icons.Check /> Turmas Recebidas (Histórico)
-                                                    </p>
-                                                    <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
-                                                        {inst.receivedClasses.map(cls => (
-                                                            <div key={cls.id} className="text-xs bg-blue-50 p-1.5 rounded flex justify-between items-center border border-blue-100">
-                                                                <div>
-                                                                    <span className="font-bold text-gray-700">T.{cls.id}</span>
-                                                                    <span className="text-gray-500 mx-1">-</span>
-                                                                    <span className="text-gray-600">{cls.curso.substring(0, 15)}...</span>
-                                                                </div>
-                                                                <span className="text-[10px] bg-white px-1 border rounded text-gray-500" title={`Ex-Titular: ${cls.instrutor1}`}>
-                                                                    Ex: {cls.instrutor1}
-                                                                </span>
-                                                            </div>
-                                                        ))}
-                                                    </div>
+                                            {/* --- SEÇÃO 1: TURMAS ATIVAS (Titular + Recebidas) --- */}
+                                            <div className="border-t border-gray-100 pt-4 mt-2">
+                                                <div className="section-header text-green-700">
+                                                    <span>🟢 Ativas (Sob Responsabilidade)</span>
+                                                    <div className="section-line bg-green-100"></div>
                                                 </div>
-                                            )}
+                                                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                                                    {/* Minhas Turmas (Titular) - que não foram transferidas */}
+                                                    {activeMyClasses.map(cls => (
+                                                        <div key={cls.id} className="p-2 rounded border text-xs bg-green-50 border-green-200 shadow-sm relative overflow-hidden">
+                                                            <div className="absolute top-0 right-0 w-2 h-2 bg-green-500 rounded-bl"></div>
+                                                            <div className="flex justify-between font-bold text-gray-800">
+                                                                <span>T.{cls.id}</span>
+                                                                <span className="text-green-800">{cls.curso.substring(0, 15)}...</span>
+                                                            </div>
+                                                            <div className="flex items-center justify-between mt-1 text-gray-500">
+                                                                <span title="Início da Turma">Início: {formatDatePTBR(cls.inicio)}</span>
+                                                                <span title="Data Prevista de Troca">Troca: {cls.dataTransferencia ? formatDatePTBR(cls.dataTransferencia) : '-'}</span>
+                                                            </div>
+                                                            {/* Botão de Sugestão se não tiver I2 */}
+                                                            {(!cls.instrutor2 || cls.instrutor2 === '') && cls.dataTransferencia && (
+                                                                <div className="mt-2 pt-1 border-t border-green-200">
+                                                                    <button 
+                                                                        onClick={() => {
+                                                                            const best = getRecommendationsFor(cls.curso, inst.nome)[0];
+                                                                            if(best) assignInstructor2(cls.id, best.nome);
+                                                                            else alert("Sem sugestão disponível");
+                                                                        }}
+                                                                        className="w-full py-1 bg-white text-green-700 rounded border border-green-300 hover:bg-green-100 flex items-center justify-center gap-1 font-bold shadow-sm text-[10px]"
+                                                                    >
+                                                                        <Icons.Bulb /> Sugerir Substituto (I2)
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                    
+                                                    {/* Turmas Recebidas (Sou o I2 agora) */}
+                                                    {inst.receivedClasses.map(cls => (
+                                                        <div key={cls.id} className="p-2 rounded border text-xs bg-blue-50 border-blue-200 shadow-sm relative overflow-hidden">
+                                                            <div className="absolute top-0 right-0 px-1 bg-blue-500 text-white text-[9px] font-bold rounded-bl">RECEBIDA</div>
+                                                            <div className="flex justify-between font-bold text-gray-800 mt-1">
+                                                                <span>T.{cls.id}</span>
+                                                                <span className="text-blue-800">{cls.curso.substring(0, 15)}...</span>
+                                                            </div>
+                                                            <div className="text-[10px] text-gray-500 mt-1 flex items-center gap-1">
+                                                                <span className="bg-white px-1 border rounded text-gray-400">De: {cls.instrutor1}</span>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                    
+                                                    {activeMyClasses.length === 0 && inst.receivedClasses.length === 0 && (
+                                                        <p className="text-center text-gray-400 text-xs italic py-2">Nenhuma turma ativa no momento.</p>
+                                                    )}
+                                                </div>
+                                            </div>
 
-                                            {/* GESTÃO DE TRANSIÇÃO DENTRO DO CARD */}
-                                            {inst.myClasses && inst.myClasses.length > 0 && (
-                                                <div className="border-t border-gray-100 pt-3 mt-2">
-                                                    <p className="text-xs font-bold text-gray-400 uppercase mb-2 flex items-center gap-1">
-                                                        <Icons.Switch /> Gestão de Transição (Inst. 1 ➔ 2)
-                                                    </p>
-                                                    <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-                                                        {inst.myClasses.map(cls => (
-                                                            <div key={cls.id} className={`p-2 rounded border text-xs ${cls.isFinished ? 'bg-red-50 border-red-200 opacity-75' : 'bg-gray-50 border-gray-100'}`}>
-                                                                <div className="flex justify-between font-bold text-gray-700">
-                                                                    <span className={cls.isFinished ? 'text-red-700' : ''}>
-                                                                        Turma {cls.id} {cls.isFinished && '(Finalizada)'}
-                                                                    </span>
-                                                                    <span className="text-blue-600">{cls.curso.substring(0, 15)}...</span>
+                                            {/* --- SEÇÃO 2: TURMAS REPASSADAS (Histórico) --- */}
+                                            {transferredMyClasses.length > 0 && (
+                                                <div className="border-t border-gray-100 pt-4 mt-2">
+                                                    <div className="section-header text-gray-400">
+                                                        <span>⚪ Repassadas / Histórico</span>
+                                                        <div className="section-line"></div>
+                                                    </div>
+                                                    <div className="space-y-2 max-h-32 overflow-y-auto pr-1 opacity-75 hover:opacity-100 transition-opacity">
+                                                        {transferredMyClasses.map(cls => (
+                                                            <div key={cls.id} className="p-2 rounded border text-xs bg-gray-50 border-gray-200 text-gray-500">
+                                                                <div className="flex justify-between font-semibold">
+                                                                    <span>T.{cls.id}</span>
+                                                                    <span>{cls.curso.substring(0, 15)}...</span>
                                                                 </div>
-                                                                <div className="flex items-center gap-1 text-gray-500 mt-1">
-                                                                    <span>Fim I1: {cls.dataTransferencia ? formatDatePTBR(cls.dataTransferencia) : 'N/A'}</span>
+                                                                <div className="flex items-center gap-1 mt-1 text-[10px]">
+                                                                    <span>Repassada em: {cls.dataTransferencia ? formatDatePTBR(cls.dataTransferencia) : 'N/A'}</span>
                                                                     <Icons.ArrowRight />
-                                                                    <span className="font-bold text-green-700" title="Início dia útil seguinte">Início I2: {getNextWorkingDay(cls.dataTransferencia) || 'N/A'}</span>
-                                                                </div>
-                                                                <div className="mt-1 flex items-center justify-between">
-                                                                    <span className="font-semibold text-gray-600">
-                                                                        I2: {cls.instrutor2 || <span className="text-red-400 italic">Pendente</span>}
-                                                                    </span>
-                                                                    {(!cls.instrutor2 || cls.instrutor2 === '') && cls.dataTransferencia && !cls.isFinished && (
-                                                                        <button 
-                                                                            onClick={() => {
-                                                                                const best = getRecommendationsFor(cls.curso, inst.nome)[0];
-                                                                                if(best) assignInstructor2(cls.id, best.nome);
-                                                                                else alert("Sem sugestão disponível");
-                                                                            }}
-                                                                            className="px-2 py-0.5 bg-green-100 text-green-700 rounded hover:bg-green-200 border border-green-200 flex items-center gap-1"
-                                                                            title="Aplicar melhor sugestão automaticamente"
-                                                                        >
-                                                                            <Icons.Bulb /> Sugerir
-                                                                        </button>
-                                                                    )}
+                                                                    <span className="font-bold text-gray-700 bg-gray-200 px-1 rounded">Para: {cls.instrutor2}</span>
                                                                 </div>
                                                             </div>
                                                         ))}
@@ -906,7 +924,7 @@
                                                 </div>
                                             )}
                                         </div>
-                                    ))}
+                                    )})}
                                 </div>
                             </div>
                         )}
@@ -1064,7 +1082,7 @@
                                     </div>
                                     <div>
                                         <label className="block text-sm font-bold text-gray-700 mb-1">Curso</label>
-                                        <select required className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" value={newClass.curso} onChange={e => setNewClass({...newClass, curso: e.target.value})}>
+                                        <select required className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" value={newClass.curso} onChange={handleNewClassCourseChange}>
                                             <option value="">Selecione...</option>
                                             {COURSE_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
                                         </select>
@@ -1090,8 +1108,22 @@
                                         <input required type="date" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" value={newClass.termino} onChange={e => setNewClass({...newClass, termino: e.target.value})} />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-bold text-gray-700 mb-1">Instrutor 1</label>
-                                        <input required type="text" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" value={newClass.instrutor1} onChange={e => setNewClass({...newClass, instrutor1: e.target.value})} />
+                                        <label className="block text-sm font-bold text-gray-700 mb-1 flex items-center gap-2">
+                                            Instrutor 1
+                                            {currentRecommendedInst && (
+                                                <span className="text-xs font-normal text-green-600 bg-green-50 px-2 py-0.5 rounded border border-green-200">
+                                                    Recomendado: {currentRecommendedInst}
+                                                </span>
+                                            )}
+                                        </label>
+                                        <input required type="text" list="instructors-list-main" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500" value={newClass.instrutor1} onChange={e => setNewClass({...newClass, instrutor1: e.target.value})} placeholder="Selecione ou digite..." />
+                                        <datalist id="instructors-list-main">
+                                            {uniqueInstrutores.map(inst => (
+                                                <option key={inst} value={inst}>
+                                                    {inst === currentRecommendedInst ? `${inst} (Recomendado)` : inst}
+                                                </option>
+                                            ))}
+                                        </datalist>
                                     </div>
                                     <div>
                                         <label className="block text-sm font-bold text-gray-700 mb-1 flex justify-between">
