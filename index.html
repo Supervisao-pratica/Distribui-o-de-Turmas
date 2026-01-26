@@ -325,13 +325,14 @@
                     }
                 });
 
-                // Passo 4: TOTALIZADORES E CÁLCULO CUMULATIVO (RUNNING TOTAL)
+                // Passo 4: TOTALIZADORES E CÁLCULO CUMULATIVO (RUNNING TOTAL CORRIGIDO)
                 Object.values(stats).forEach(inst => {
                     // Ordena eventos
                     inst.futureEvents.sort((a,b) => new Date(a.date) - new Date(b.date));
                     
-                    // Cálculo do Running Total
-                    let runningCount = inst.totalTurmas; // Começa com o total ATUAL (Baseado no cenário)
+                    // Cálculo do Running Total - AGORA GARANTIDO O START PELO ATUAL
+                    // O valor 'totalTurmas' já representa o status no VIEW DATE (processado no Passo 2)
+                    let runningCount = inst.totalTurmas; 
 
                     inst.futureEvents.forEach(evt => {
                         if (evt.type === 'entry') runningCount++;
@@ -342,8 +343,8 @@
                         evt.runningTotal = runningCount;
                     });
                     
-                    // Final Total também pode ser calculado somando os detalhes, mas o runningCount é mais direto para o "timeline"
-                    // Vamos garantir que o Total Futuro bata com o último Running Total
+                    // Final Total = O último valor do running count
+                    // Se não houver eventos futuros, o futuro é igual ao atual.
                     inst.futureTotal = runningCount;
 
                     // Recalcula detalheCursos.final para consistência
@@ -803,12 +804,16 @@
                                                     <span className="text-sm text-indigo-600 ml-1">Turmas</span>
                                                 </div>
                                                 <div className="text-right">
-                                                    <span className={`text-sm font-bold px-2 py-1 rounded 
-                                                        ${(selectedInstructorDetail.futureTotal - selectedInstructorDetail.totalTurmas) > 0 ? 'bg-green-100 text-green-700' : 
-                                                          (selectedInstructorDetail.futureTotal - selectedInstructorDetail.totalTurmas) < 0 ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'}`}>
-                                                        {(selectedInstructorDetail.futureTotal - selectedInstructorDetail.totalTurmas) > 0 ? `+${selectedInstructorDetail.futureTotal - selectedInstructorDetail.totalTurmas}` : 
-                                                         (selectedInstructorDetail.futureTotal - selectedInstructorDetail.totalTurmas)} Var.
-                                                    </span>
+                                                    {(() => {
+                                                        const diff = selectedInstructorDetail.futureTotal - selectedInstructorDetail.totalTurmas;
+                                                        if (diff > 0) {
+                                                            return <span className="text-sm font-bold px-2 py-1 rounded bg-green-100 text-green-700">▲ +{diff} Turmas</span>;
+                                                        } else if (diff < 0) {
+                                                            return <span className="text-sm font-bold px-2 py-1 rounded bg-red-100 text-red-700">▼ {diff} Turmas</span>;
+                                                        } else {
+                                                            return <span className="text-sm font-bold px-2 py-1 rounded bg-gray-100 text-gray-600">▬ Estável</span>;
+                                                        }
+                                                    })()}
                                                 </div>
                                             </div>
                                         </div>
