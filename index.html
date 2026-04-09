@@ -417,12 +417,47 @@ const toggleTecnicaPermission = (nome) => {
             };
 // --- INÍCIO DO PASSO 2: FUNÇÃO PARA EXCLUIR TURMA ---
             const handleDeleteClass = (id) => {
-                if (window.confirm(`Tem certeza que deseja EXCLUIR a turma ${id}? Esta ação apagará a turma da nuvem e não pode ser desfeita.`)) {
+                if (confirm(`⚠️ ATENÇÃO: Deseja EXCLUIR a turma ${id} permanentemente?`)) {
+                    // 1. Filtra os dados removendo a turma
                     const newData = data.filter(d => String(d.id) !== String(id));
                     const newSubs = substitutions.filter(sub => String(sub.turmaId) !== String(id));
-                    const newLogs = addLog("Exclusão", id, `Turma ${id}`, "Turma excluída permanentemente");
+                    
+                    // 2. Gera o Log
+                    const newLogs = addLog("Exclusão", id, `Turma ${id}`, "Turma removida via lixeira");
+
+                    // 3. Atualiza os estados locais (para sumir da tela na hora)
+                    setData(newData);
+                    setSubstitutions(newSubs);
+                    setLogs(newLogs);
+
+                    // 4. Salva no Firebase/Nuvem
                     persist(newData, newSubs, newLogs);
+                    
                     showNotify(`Turma ${id} excluída com sucesso!`, "success");
+                }
+            };
+const handleClearAllData = () => {
+                const badge = prompt("⚠️ ÁREA CRÍTICA: Para APAGAR TODO O BANCO DE DADOS, digite seu número de CRACHÁ:");
+                
+                if (!badge || badge.trim() === "") {
+                    showNotify("Operação cancelada. Crachá necessário.", "error");
+                    return;
+                }
+
+                if (confirm("VOCÊ TEM CERTEZA? Isso apagará todas as turmas, substituições e históricos permanentemente.")) {
+                    const emptyData = [];
+                    const emptySubs = [];
+                    const finalLogs = addLog("LIMPEZA TOTAL", "SISTEMA", `Crachá: ${badge}`, "O usuário resetou o banco de dados completo.");
+
+                    // Limpa tudo localmente
+                    setData(emptyData);
+                    setSubstitutions(emptySubs);
+                    setLogs(finalLogs);
+
+                    // Limpa na nuvem (Firebase)
+                    persist(emptyData, emptySubs, finalLogs);
+
+                    showNotify("O banco de dados foi zerado com sucesso!", "success");
                 }
             };
             // --- FIM DO PASSO 2 ---
@@ -1586,7 +1621,15 @@ const toggleTecnicaPermission = (nome) => {
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('subs');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='subs'?'border-blue-600 text-blue-900 bg-white':'border-transparent text-gray-500 hover:text-blue-600 hover:bg-white'}`}>Relatório Substituições</button>
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('estatisticas');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='estatisticas'?'border-emerald-600 text-emerald-900 bg-emerald-50':'border-transparent text-gray-500 hover:text-emerald-600 hover:bg-emerald-50'}`}>Estatísticas e Médias</button>
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('logs');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='logs'?'border-purple-600 text-purple-900 bg-purple-50':'border-transparent text-gray-500 hover:text-purple-600 hover:bg-purple-50'}`}>Histórico</button>
-                                <button onClick={() => fileInputRef.current.click()} className="ml-auto px-3 py-1 text-emerald-600 hover:bg-emerald-50 border border-emerald-200 rounded text-xs font-bold flex items-center gap-1 transition"><Icons.Upload /> Importar Excel</button>
+                                {/* Botão de Limpar Banco */}
+    <button onClick={handleClearAllData} className="px-3 py-1 text-red-600 hover:bg-red-50 border border-red-200 rounded text-xs font-bold flex items-center gap-1 transition mr-2">
+        <Icons.Trash /> Limpar Banco
+    </button>
+
+    {/* Botão de Importar que já existia */}
+    <button onClick={() => fileInputRef.current.click()} className="ml-auto px-3 py-1 text-emerald-600 hover:bg-emerald-50 border border-emerald-200 rounded text-xs font-bold flex items-center gap-1 transition">
+        <Icons.Upload /> Importar Excel
+    </button>
                             </div>
                         </div>
                     </div>
