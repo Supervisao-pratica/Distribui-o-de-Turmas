@@ -83,6 +83,27 @@
             @page { margin: 1cm; size: landscape; }
         }
     </style>
+<!-- INÍCIO DO PASSO 1: FIREBASE -->
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+      import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+      const firebaseConfig = {
+        apiKey: "AIzaSyAdjsftZXsQ00waKGsLDeY7lDqRgeU_DnM",
+        authDomain: "sgt-senac.firebaseapp.com",
+        projectId: "sgt-senac",
+        storageBucket: "sgt-senac.firebasestorage.app",
+        messagingSenderId: "278613531988",
+        appId: "1:278613531988:web:51af3366f7199c274b3cc1"
+      };
+
+      const app = initializeApp(firebaseConfig);
+      const db = getFirestore(app);
+
+      window.remoteDB = db;
+      window.dbMethods = { doc, setDoc, onSnapshot };
+    </script>
+    <!-- FIM DO PASSO 1 -->
 </head>
 <body>
     <div id="root"></div>
@@ -253,25 +274,53 @@ const toggleTecnicaPermission = (nome) => {
             const [emailConfigModal, setEmailConfigModal] = useState(false);
             const [emailPeriod, setEmailPeriod] = useState({ start: '', end: '' });
 
+            // --- INÍCIO DO PASSO 2: LÓGICA DO FIREBASE ---
             useEffect(() => {
-                try {
-                    const rawData = localStorage.getItem(DB_KEY);
-                    const rawSubs = localStorage.getItem(SUB_KEY);
-                    const rawLogs = localStorage.getItem(LOG_KEY);
-                    
-                    if (rawData) {
-                        const parsed = JSON.parse(rawData).map(r => ({...r, modalidade: getSafeModalidade(r)}));
-                        setData(parsed);
-                    } else {
-                        setData(INITIAL_DB);
-                    }
+                if (!window.remoteDB) return;
 
-                    if (rawSubs) setSubstitutions(JSON.parse(rawSubs));
-                    if (rawLogs) setLogs(JSON.parse(rawLogs));
-                } catch (e) {
-                    console.error("Erro no carregamento inicial", e);
-                }
+                const { doc, onSnapshot } = window.dbMethods;
+                
+                // Fica "ouvindo" a nuvem o tempo todo
+                const unsub = onSnapshot(doc(window.remoteDB, "sgt", "dadosGerais"), (docSnap) => {
+                    if (docSnap.exists()) {
+                        const dbData = docSnap.data();
+                        
+                        // Formata os dados ao baixar da nuvem
+                        const parsedData = (dbData.data || []).map(r => ({...r, modalidade: getSafeModalidade(r)}));
+                        
+                        setData(parsedData);
+                        setLogs(dbData.logs || []);
+                        setSubstitutions(dbData.substitutions || []);
+                    }
+                });
+
+                return () => unsub(); // Limpa a conexão ao fechar a tela
             }, []);
+
+            useEffect(() => {
+                if (!window.remoteDB || data.length === 0) return;
+
+                const { doc, setDoc } = window.dbMethods;
+                
+                // Salva na nuvem silenciosamente
+                const salvarNuvem = async () => {
+                    try {
+                        await setDoc(doc(window.remoteDB, "sgt", "dadosGerais"), {
+                            data,
+                            logs,
+                            substitutions,
+                            lastUpdate: new Date().toISOString()
+                        });
+                    } catch (e) {
+                        console.error("Erro ao salvar na nuvem: ", e);
+                    }
+                };
+
+                // Salva 1 segundo após você terminar de editar algo na tela
+                const timeoutId = setTimeout(salvarNuvem, 1000);
+                return () => clearTimeout(timeoutId);
+            }, [data, logs, substitutions]);
+            // --- FIM DO PASSO 2 ---
 
             const persist = (newData, newSubs, newLogs) => {
                 setIsSaving(true);
