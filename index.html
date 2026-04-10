@@ -410,8 +410,15 @@ const toggleTecnicaPermission = (nome) => {
                     });
                 }
 
+                // Atualiza a tela (Estado Local)
+                setData(newData);
+                setSubstitutions(newSubs);
+                setLogs(newLogs);
+
+                // Salva na Nuvem (Firebase)
                 persist(newData, newSubs, newLogs);
-                showNotify(`Turma ${editingClass.id} atualizada com sucesso!`);
+
+                showNotify(`Turma ${editingClass.id} atualizada com sucesso!`, "success");
                 setIsEditModalOpen(false);
                 setEditingClass(null);
             };
