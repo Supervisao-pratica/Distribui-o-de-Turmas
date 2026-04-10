@@ -298,44 +298,42 @@ const toggleTecnicaPermission = (nome) => {
                 return () => unsub(); // Limpa a conexão ao fechar a tela
             }, []);
 
-            useEffect(() => {
-                if (!window.remoteDB || data.length === 0) return;
-
-                const { doc, setDoc } = window.dbMethods;
-                
-                // Salva na nuvem silenciosamente
-                const salvarNuvem = async () => {
-                    try {
-                        await setDoc(doc(window.remoteDB, "sgt", "dadosGerais"), {
-                            data,
-                            logs,
-                            substitutions,
-                            lastUpdate: new Date().toISOString()
-                        });
-                    } catch (e) {
-                        console.error("Erro ao salvar na nuvem: ", e);
-                    }
-                };
-
-                // Salva 1 segundo após você terminar de editar algo na tela
-                const timeoutId = setTimeout(salvarNuvem, 1000);
-                return () => clearTimeout(timeoutId);
-            }, [data, logs, substitutions]);
-            // --- FIM DO PASSO 2 ---
-
-            const persist = (newData, newSubs, newLogs) => {
+            // O código antigo de "auto-save" foi removido para evitar Loop Infinito.
+            // --- INÍCIO DA FUNÇÃO PERSIST DEFINITIVA ---
+            const persist = async (newData, newSubs, newLogs) => {
                 setIsSaving(true);
+                
+                // 1. Atualiza a tela instantaneamente (Estado Local)
                 setData(newData);
-                setSubstitutions(newSubs);
+                setSubscritutions ? setSubstitutions(newSubs) : null;
                 if(newLogs) setLogs(newLogs);
-              
+                
+                // 2. Salva no cache do navegador (Backup Rápido)
                 localStorage.setItem(DB_KEY, JSON.stringify(newData));
                 localStorage.setItem(SUB_KEY, JSON.stringify(newSubs));
                 if(newLogs) localStorage.setItem(LOG_KEY, JSON.stringify(newLogs));
-              
+                
+                // 3. Salva DIRETO no Firebase na mesma hora (Sem atrasos)
+                if (window.remoteDB && window.dbMethods) {
+                    try {
+                        const { doc, setDoc } = window.dbMethods;
+                        await setDoc(doc(window.remoteDB, "sgt", "dadosGerais"), {
+                            data: newData,
+                            logs: newLogs || logs,
+                            substitutions: newSubs,
+                            lastUpdate: new Date().toISOString()
+                        });
+                        console.log("🔥 Salvo no Firebase com sucesso!");
+                    } catch (e) {
+                        console.error("Erro ao salvar na nuvem: ", e);
+                        showNotify("Erro ao sincronizar com a nuvem.", "error");
+                    }
+                }
+                
                 setLastSaved(new Date());
                 setTimeout(() => setIsSaving(false), 500);
             };
+            // --- FIM DA FUNÇÃO PERSIST DEFINITIVA ---
 
             const addLog = (type, classId, before, after) => {
                 const newLog = { id: Date.now(), timestamp: new Date().toISOString(), type, classId, before: typeof before === 'object' ? JSON.stringify(before) : safeString(before), after: typeof after === 'object' ? JSON.stringify(after) : safeString(after) };
