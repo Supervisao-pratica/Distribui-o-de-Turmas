@@ -298,14 +298,13 @@ const toggleTecnicaPermission = (nome) => {
                 return () => unsub(); // Limpa a conexão ao fechar a tela
             }, []);
 
-            // O código antigo de "auto-save" foi removido para evitar Loop Infinito.
             // --- INÍCIO DA FUNÇÃO PERSIST DEFINITIVA ---
             const persist = async (newData, newSubs, newLogs) => {
                 setIsSaving(true);
                 
                 // 1. Atualiza a tela instantaneamente (Estado Local)
                 setData(newData);
-                setSubscritutions ? setSubstitutions(newSubs) : null;
+                setSubstitutions(newSubs); // <-- O ERRO ESTAVA NESSA LINHA! (corrigido)
                 if(newLogs) setLogs(newLogs);
                 
                 // 2. Salva no cache do navegador (Backup Rápido)
@@ -331,8 +330,8 @@ const toggleTecnicaPermission = (nome) => {
                 }
                 
                 setLastSaved(new Date());
-                setTimeout(() => setIsSaving(false), 500);
-            };
+                setTimeout(() => setIsSaving(false), 500); // Isso apaga o aviso "Salvando..."
+            };            
             // --- FIM DA FUNÇÃO PERSIST DEFINITIVA ---
 
             const addLog = (type, classId, before, after) => {
