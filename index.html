@@ -951,6 +951,7 @@ const handleClearAllData = () => {
                     const wb = XLSX.utils.book_new();
                     const mappedData = data.map(item => ({
                         "Turma": item.id,
+                        "Curso": item.curso, // Movemos o curso para o começo, fica mais organizado
                         "APZ": item.modalidade || getSafeModalidade(item),
                         "Analistas": item.analista,
                         "Alunos": item.alunos,
@@ -958,10 +959,9 @@ const handleClearAllData = () => {
                         "Término": formatarDataBR(item.termino),
                         "Passagem 1": formatarDataBR(item.dataTransferencia),
                         "Passagem 2": formatarDataBR(item.dataTransferencia2),
-                        "Instrutor 1": item.instrutor1,
-                        "Instrutor 2": item.instrutor2,
-                        "Instrutor 3": item.instrutor3,
-                        "Curso": item.curso
+                        "Instrutor 1": item.instrutor1 || '',
+                        "Instrutor 2": item.instrutor2 || '',
+                        "Instrutor 3": item.instrutor3 || ''
                     }));
                     const wsData = XLSX.utils.json_to_sheet(mappedData);
                     XLSX.utils.book_append_sheet(wb, wsData, "Turmas_DB");
