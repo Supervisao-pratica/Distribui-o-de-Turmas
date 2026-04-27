@@ -949,7 +949,9 @@ const handleClearAllData = () => {
                     };
 
                     const wb = XLSX.utils.book_new();
-                    const mappedData = data.map(item => ({
+                    
+                    // Puxamos de 'processedData' para pegar o Status e Instrutor Atual reais
+                    const mappedData = processedData.map(item => ({
                         "id": item.id || '',
                         "modalidade": item.modalidade || getSafeModalidade(item) || '',
                         "curso": item.curso || '',
@@ -962,12 +964,20 @@ const handleClearAllData = () => {
                         "instrutor1": item.instrutor1 || '',
                         "instrutor2": item.instrutor2 || '',
                         "instrutor3": item.instrutor3 || '',
-                        "instrutorAtual": item.instrutorAtual || item.instrutor1 || '',
+                        "instrutorAtual": item.instrutorAtual || '',
                         "status": item.status || '',
-                        // Transforma o objeto de logs de automação em texto para o Excel conseguir ler
                         "autoAssignedLogs": item.autoAssignedLogs ? JSON.stringify(item.autoAssignedLogs) : ''
                     }));
-                    const wsData = XLSX.utils.json_to_sheet(mappedData);
+
+                    // TRAVA DE SEGURANÇA: Força o Excel a usar milimetricamente esta ordem de colunas
+                    const ordemColunas = [
+                        "id", "modalidade", "curso", "analista", "alunos", "inicio", "termino", 
+                        "dataTransferencia", "dataTransferencia2", "instrutor1", "instrutor2", 
+                        "instrutor3", "instrutorAtual", "status", "autoAssignedLogs"
+                    ];
+                    
+                    const wsData = XLSX.utils.json_to_sheet(mappedData, { header: ordemColunas });
+                    
                     XLSX.utils.book_append_sheet(wb, wsData, "Turmas_DB");
                     const wsSubs = XLSX.utils.json_to_sheet(substitutions);
                     XLSX.utils.book_append_sheet(wb, wsSubs, "Subs_DB");
