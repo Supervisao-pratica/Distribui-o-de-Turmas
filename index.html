@@ -950,18 +950,22 @@ const handleClearAllData = () => {
 
                     const wb = XLSX.utils.book_new();
                     const mappedData = data.map(item => ({
-                        "Turma": item.id,
-                        "APZ": item.modalidade || getSafeModalidade(item),
-                        "Analistas": item.analista,
-                        "Alunos": item.alunos,
-                        "Início": formatarDataBR(item.inicio),
-                        "Término": formatarDataBR(item.termino),
-                        "Passagem 1": formatarDataBR(item.dataTransferencia),
-                        "Passagem 2": formatarDataBR(item.dataTransferencia2),
-                        "Instrutor 1": item.instrutor1,
-                        "Instrutor 2": item.instrutor2,
-                        "Instrutor 3": item.instrutor3,
-                        "Curso": item.curso
+                        "id": item.id || '',
+                        "modalidade": item.modalidade || getSafeModalidade(item) || '',
+                        "curso": item.curso || '',
+                        "analista": item.analista || '',
+                        "alunos": item.alunos || 0,
+                        "inicio": formatarDataBR(item.inicio),
+                        "termino": formatarDataBR(item.termino),
+                        "dataTransferencia": formatarDataBR(item.dataTransferencia),
+                        "dataTransferencia2": formatarDataBR(item.dataTransferencia2),
+                        "instrutor1": item.instrutor1 || '',
+                        "instrutor2": item.instrutor2 || '',
+                        "instrutor3": item.instrutor3 || '',
+                        "instrutorAtual": item.instrutorAtual || item.instrutor1 || '',
+                        "status": item.status || '',
+                        // Transforma o objeto de logs de automação em texto para o Excel conseguir ler
+                        "autoAssignedLogs": item.autoAssignedLogs ? JSON.stringify(item.autoAssignedLogs) : ''
                     }));
                     const wsData = XLSX.utils.json_to_sheet(mappedData);
                     XLSX.utils.book_append_sheet(wb, wsData, "Turmas_DB");
