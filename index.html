@@ -1596,10 +1596,32 @@ const handleClearAllData = () => {
                         // Remove marcações internas da IA da exportação para o Excel ficar mais limpo
                         delete newRow.autoAssignedLogs;
 
+                        // Ajuste Crítico: Cria um objeto NOVO com a ordem exata forçada para o Excel ler
+                        if (name.includes('geral')) {
+                            return {
+                                id: newRow.id,
+                                modalidade: newRow.modalidade,
+                                curso: newRow.curso,
+                                analista: newRow.analista,
+                                alunos: newRow.alunos,
+                                inicio: newRow.inicio,
+                                termino: newRow.termino,
+                                dataTransferencia: newRow.dataTransferencia,
+                                dataTransferencia2: newRow.dataTransferencia2,
+                                instrutor1: newRow.instrutor1 || '',
+                                instrutor2: newRow.instrutor2 || '',
+                                instrutor3: newRow.instrutor3 || '',
+                                instrutorAtual: newRow.instrutorAtual || '',
+                                status: newRow.status || ''
+                            };
+                        }
+
                         return newRow;
                     });
 
-                    const ws = XLSX.utils.json_to_sheet(formattedData); 
+                    // TRAVA DE SEGURANÇA: Força as colunas do relatório geral na biblioteca XLSX
+                    const opts = name.includes('geral') ? { header: ["id", "modalidade", "curso", "analista", "alunos", "inicio", "termino", "dataTransferencia", "dataTransferencia2", "instrutor1", "instrutor2", "instrutor3", "instrutorAtual", "status"] } : {};
+                    const ws = XLSX.utils.json_to_sheet(formattedData, opts); 
                     const wb = XLSX.utils.book_new(); 
                     XLSX.utils.book_append_sheet(wb, ws, "Relatório"); 
                     XLSX.writeFile(wb, `${name}.xlsx`); 
