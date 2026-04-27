@@ -1576,56 +1576,59 @@ const handleClearAllData = () => {
 
             const exportReport = (dataToExport, name) => { 
                 try { 
-                    // Pega os dados e traduz todas as datas para o Padrão Brasileiro (DD/MM/YYYY)
-                    const formattedData = dataToExport.map(row => {
-                        let newRow = { ...row };
-                        
-                        // Formata as datas do Relatório Geral
-                        if (newRow.inicio) newRow.inicio = formatDatePTBR(newRow.inicio);
-                        if (newRow.termino) newRow.termino = formatDatePTBR(newRow.termino);
-                        if (newRow.dataTransferencia) newRow.dataTransferencia = formatDatePTBR(newRow.dataTransferencia);
-                        if (newRow.dataTransferencia2) newRow.dataTransferencia2 = formatDatePTBR(newRow.dataTransferencia2);
-                        
-                        // Formata as datas do Relatório de Substituições
-                        if (newRow.dataInicio) newRow.dataInicio = formatDatePTBR(newRow.dataInicio);
-                        if (newRow.dataFim) newRow.dataFim = formatDatePTBR(newRow.dataFim);
-                        
-                        // Formata as datas do Histórico (Logs)
-                        if (newRow.timestamp) newRow.timestamp = new Date(newRow.timestamp).toLocaleString('pt-BR');
-                        
-                        // Remove marcações internas da IA da exportação para o Excel ficar mais limpo
-                        delete newRow.autoAssignedLogs;
+                    let finalDataForExcel = [];
 
-                        // Ajuste Crítico: Cria um objeto NOVO com a ordem exata forçada para o Excel ler
-                        if (name.includes('geral')) {
-                            return {
-                                id: newRow.id,
-                                modalidade: newRow.modalidade,
-                                curso: newRow.curso,
-                                analista: newRow.analista,
-                                alunos: newRow.alunos,
-                                inicio: newRow.inicio,
-                                termino: newRow.termino,
-                                dataTransferencia: newRow.dataTransferencia,
-                                dataTransferencia2: newRow.dataTransferencia2,
-                                instrutor1: newRow.instrutor1 || '',
-                                instrutor2: newRow.instrutor2 || '',
-                                instrutor3: newRow.instrutor3 || '',
-                                instrutorAtual: newRow.instrutorAtual || '',
-                                status: newRow.status || ''
-                            };
-                        }
+                    // 1. Se for o Relatório Geral
+                    if (name.includes('geral')) {
+                        // Mapeamento EXATO e blindado. A ordem aqui é a ordem que sai no Excel.
+                        finalDataForExcel = dataToExport.map(row => ({
+                            "Turma": safeString(row.id),
+                            "Modalidade": safeString(row.modalidade),
+                            "Curso": safeString(row.curso),
+                            "Analista": safeString(row.analista),
+                            "Alunos": parseInt(row.alunos) || 0,
+                            "Início": formatDatePTBR(row.inicio),
+                            "Término": formatDatePTBR(row.termino),
+                            "Passagem 1": formatDatePTBR(row.dataTransferencia),
+                            "Passagem 2": formatDatePTBR(row.dataTransferencia2),
+                            "Instrutor 1": safeString(row.instrutor1),
+                            "Instrutor 2": safeString(row.instrutor2),
+                            "Instrutor 3": safeString(row.instrutor3),
+                            "Instrutor Atual": safeString(row.instrutorAtual),
+                            "Situação": safeString(row.status || 'Ativa')
+                        }));
+                    } 
+                    // 2. Se for o Relatório de Substituições
+                    else if (name.includes('subs')) {
+                         finalDataForExcel = dataToExport.map(row => ({
+                            "Turma": safeString(row.turmaId),
+                            "Motivo/Obs": safeString(row.motivo),
+                            "Instrutor Ausente": safeString(row.instrutorAusente),
+                            "Instrutor Substituto": safeString(row.instrutorSubstituto),
+                            "Data Início": formatDatePTBR(row.dataInicio),
+                            "Data Fim": formatDatePTBR(row.dataFim),
+                            "Definitiva?": row.isDefinitive ? "Sim" : "Não"
+                         }));
+                    } 
+                    // 3. Se for o Histórico de Logs
+                    else {
+                         finalDataForExcel = dataToExport.map(row => ({
+                            "Data/Hora": new Date(row.timestamp).toLocaleString('pt-BR'),
+                            "ID Turma": safeString(row.classId),
+                            "Tipo de Ação": safeString(row.type),
+                            "Dado Anterior": safeString(row.before),
+                            "Dado Novo": safeString(row.after)
+                         }));
+                    }
 
-                        return newRow;
-                    });
-
-                    // TRAVA DE SEGURANÇA: Força as colunas do relatório geral na biblioteca XLSX
-                    const opts = name.includes('geral') ? { header: ["id", "modalidade", "curso", "analista", "alunos", "inicio", "termino", "dataTransferencia", "dataTransferencia2", "instrutor1", "instrutor2", "instrutor3", "instrutorAtual", "status"] } : {};
-                    const ws = XLSX.utils.json_to_sheet(formattedData, opts); 
+                    // Agora entregamos o dado limpo e em português para a biblioteca
+                    const ws = XLSX.utils.json_to_sheet(finalDataForExcel); 
                     const wb = XLSX.utils.book_new(); 
                     XLSX.utils.book_append_sheet(wb, ws, "Relatório"); 
                     XLSX.writeFile(wb, `${name}.xlsx`); 
+                    
                 } catch (err) { 
+                    console.error("Erro no Excel:", err);
                     showNotify("Erro ao exportar o arquivo excel.", "error");
                 } 
             };
