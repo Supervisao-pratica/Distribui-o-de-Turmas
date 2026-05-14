@@ -394,15 +394,7 @@
                 setTimeout(() => setIsSaving(false), 500); 
             };            
 
-            // === 5. AS TRAVAS DA TELA (ATENÇÃO AQUI) ===
-            // 👇 SE VOCÊ TIVER MAIS USE_EFFECTS OU USE_MEMOS ABAIXO DESSA LINHA, MOVA ESSES DOIS "IF"S LÁ PARA O FUNDO DA FUNÇÃO APP(), LOGO ANTES DO SEU "return (<div className..." PRINCIPAL.
-            if (authChecking) {
-                return <div className="min-h-screen flex items-center justify-center bg-slate-50 font-bold text-slate-500">Verificando credenciais de acesso...</div>;
-            }
-
-            if (!user) {
-                return <LoginScreen />;
-            }
+            
           
             const addLog = (type, classId, before, after) => {
                 const newLog = { id: Date.now(), timestamp: new Date().toISOString(), type, classId, before: typeof before === 'object' ? JSON.stringify(before) : safeString(before), after: typeof after === 'object' ? JSON.stringify(after) : safeString(after) };
@@ -1717,7 +1709,16 @@ const handleClearAllData = () => {
             const totalInstrutoresAtivos = dashboardInstructors.length;
             const totalAlunosGeral = dashboardInstructors.reduce((acc, inst) => acc + inst.totalAlunos, 0);
             const mediaAlunosPorInstrutor = totalInstrutoresAtivos > 0 ? Math.round(totalAlunosGeral / totalInstrutoresAtivos) : 0;
+// === AS TRAVAS DA TELA AGORA FICAM AQUI NO FINAL! ===
+            if (authChecking) {
+                return <div className="min-h-screen flex items-center justify-center bg-slate-50 font-bold text-slate-500">Verificando credenciais de acesso...</div>;
+            }
 
+            if (!user) {
+                return <LoginScreen />;
+            }
+
+            // === O DESENHO DO SISTEMA COMEÇA AQUI ===
             return (
                 <div className="min-h-screen bg-slate-100 flex flex-col pb-10">
                     <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
@@ -1725,7 +1726,7 @@ const handleClearAllData = () => {
 
                     <div className="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm header-bar no-print">
                         <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
-                            <div className="flex items-center gap-4"><img src="https://upload.wikimedia.org/wikipedia/commons/8/86/Senac_logo.svg" alt="Senac" className="h-10 w-auto" /><div className="border-l border-gray-300 pl-4 h-8 flex items-center"><h1 className="text-xl font-bold text-slate-800 tracking-tight">Gestão de Turmas</h1></div></div>
+                            <div className="flex items-center gap-4"><img src="https://upload.wikimedia.org/wikipedia/commons/8/86/Senac_logo.svg" alt="Senac" className="h-10 w-auto" /><div className="border-l border-gray-300 pl-4 h-8 flex items-center"><h1 className="text-xl font-bold text-slate-800 tracking-tight">Portal da Supervisão</h1></div></div>
                             <div className="flex items-center gap-6">
                                 <button onClick={handleFullBackupExport} className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-xs flex gap-1 items-center shadow-lg transition border border-indigo-500 animate-pulse hover:animate-none"><Icons.Sync /> Backup</button>
                                 <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos (v100)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
@@ -1734,6 +1735,9 @@ const handleClearAllData = () => {
                                     <button onClick={() => setIsSubModalOpen(true)} className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"><Icons.Switch /> Transferir</button>
                                     <button onClick={() => setIsNewInstModalOpen(true)} className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"><Icons.UserPlus /> Novo Instrutor</button>
                                     <button onClick={() => setIsFormOpen(true)} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"><Icons.Plus /> Nova Turma</button>
+                                    
+                                    {/* Botão de deslogar do sistema */}
+                                    <button onClick={() => window.authMethods.signOut(window.auth)} className="ml-2 px-3 py-2 bg-slate-100 text-slate-500 rounded-lg hover:bg-red-50 hover:text-red-600 font-bold text-sm flex gap-1 items-center shadow-sm transition">Sair</button>
                                 </div>
                             </div>
                         </div>
