@@ -268,11 +268,7 @@
             return `${months[parseInt(m, 10) - 1]} de ${y}`;
         };
 
-        function App() {
-            // === 1. ESTADOS DE AUTENTICAÇÃO ===
-            const [user, setUser] = useState(null);
-            const [authChecking, setAuthChecking] = useState(true);
-
+        function App({ user }) {
             // === ESTADOS ORIGINAIS DA APLICAÇÃO ===
             const [data, setData] = useState([]);
             const [substitutions, setSubstitutions] = useState([]);
@@ -2871,8 +2867,40 @@ const handleClearAllData = () => {
             );
         }
 
+        // === PORTÃO DE SEGURANÇA (NOVO) ===
+        const AuthWrapper = () => {
+            const [loggedUser, setLoggedUser] = useState(null);
+            const [authChecking, setAuthChecking] = useState(true);
+
+            useEffect(() => {
+                if (!window.auth || !window.authMethods) {
+                    setAuthChecking(false);
+                    return;
+                }
+                const unsubscribe = window.authMethods.onAuthStateChanged(window.auth, (currentUser) => {
+                    setLoggedUser(currentUser);
+                    setAuthChecking(false);
+                });
+                return () => unsubscribe();
+            }, []);
+
+            if (authChecking) {
+                return <div className="min-h-screen flex items-center justify-center bg-slate-50 font-bold text-slate-500">Verificando credenciais de acesso...</div>;
+            }
+
+            if (!loggedUser) {
+                return <LoginScreen />;
+            }
+
+            return <App user={loggedUser} />;
+        };
+
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<ErrorBoundary><App /></ErrorBoundary>);
+        root.render(
+            <ErrorBoundary>
+                <AuthWrapper />
+            </ErrorBoundary>
+        );
     </script>
 </body>
 </html>
