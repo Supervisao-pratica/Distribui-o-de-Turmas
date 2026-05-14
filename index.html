@@ -5,10 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>S.G.T - Gestão de Turmas (v100 Mega Painel)</title>
     
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- Bibliotecas React e Utilitários -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
@@ -83,10 +81,12 @@
             @page { margin: 1cm; size: landscape; }
         }
     </style>
-<!-- INÍCIO DO PASSO 1: FIREBASE -->
-    <script type="module">
+<script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-      import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+      // 1. Todas as ferramentas do Firestore que o sistema precisa
+      import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+      // 2. Todas as ferramentas de Autenticação (Login)
+      import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
       const firebaseConfig = {
         apiKey: "AIzaSyAdjsftZXsQ00waKGsLDeY7lDqRgeU_DnM",
@@ -99,12 +99,21 @@
 
       const app = initializeApp(firebaseConfig);
       const db = getFirestore(app);
+      const auth = getAuth(app); // Inicializa o motor de senhas
 
+      // 3. Exportando o Banco de Dados e as funções para o React acessar
       window.remoteDB = db;
-      window.dbMethods = { doc, setDoc, onSnapshot };
+      window.dbMethods = { 
+        collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, onSnapshot 
+      };
+
+      // 4. Exportando a Autenticação para o React acessar
+      window.auth = auth;
+      window.authMethods = {
+        signInWithEmailAndPassword, onAuthStateChanged, signOut
+      };
     </script>
-    <!-- FIM DO PASSO 1 -->
-</head>
+    </head>
 <body>
     <div id="root"></div>
 
@@ -117,6 +126,53 @@
 
         const { useState, useEffect, useMemo, useRef, Component } = React;
         const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } = Recharts;
+
+        // --- COMPONENTE DE TELA DE LOGIN ---
+        const LoginScreen = () => {
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
+            const [loading, setLoading] = useState(false);
+
+            const handleLogin = async (e) => {
+                e.preventDefault();
+                setLoading(true);
+                setError('');
+                try {
+                    await window.authMethods.signInWithEmailAndPassword(window.auth, email, password);
+                } catch (err) {
+                    console.error(err);
+                    setError('Acesso negado. Verifique se o e-mail e a senha estão corretos.');
+                }
+                setLoading(false);
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+                    <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border border-slate-200">
+                        <div className="text-center mb-8">
+                            <div className="w-16 h-16 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl font-bold">🔒</div>
+                            <h2 className="text-2xl font-bold text-slate-800">Portal da Supervisão</h2>
+                            <p className="text-sm text-slate-500 mt-2">Acesso restrito à equipe pedagógica.</p>
+                        </div>
+                        {error && <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm mb-4 border border-red-200 font-bold text-center">{error}</div>}
+                        <form onSubmit={handleLogin} className="flex flex-col gap-4">
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1">E-mail Cadastrado</label>
+                                <input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" required placeholder="seu.email@pr.senac.br" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1">Senha</label>
+                                <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" required placeholder="••••••••" />
+                            </div>
+                            <button type="submit" disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold p-3 rounded-lg mt-2 transition flex justify-center items-center shadow-md">
+                                {loading ? 'Verificando...' : 'Entrar no Sistema'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
 
         // --- ESTRUTURA DOS LEQUES DE CURSOS (APZ) ---
         const CURSOS_POR_MODALIDADE = {
@@ -213,6 +269,11 @@
         };
 
         function App() {
+            // === 1. ESTADOS DE AUTENTICAÇÃO ===
+            const [user, setUser] = useState(null);
+            const [authChecking, setAuthChecking] = useState(true);
+
+            // === ESTADOS ORIGINAIS DA APLICAÇÃO ===
             const [data, setData] = useState([]);
             const [substitutions, setSubstitutions] = useState([]);
             const [logs, setLogs] = useState([]);
@@ -223,46 +284,38 @@
             const [notification, setNotification] = useState(null);
             const [activeTab, setActiveTab] = useState('dashboard');
             
-            // ---> AQUI ESTÁ A NOSSA VARIÁVEL NOVA SALVADORA! <---
             const [dashboardView, setDashboardView] = useState('instructors');
-            
             const [reportType, setReportType] = useState('geral');
             const fileInputRef = useRef(null);
 
             const [filters, setFilters] = useState({ instrutor: '', analista: '', modalidade: '', curso: '', turma: '', dataTransferencia: '' });
             const [isFormOpen, setIsFormOpen] = useState(false);
             
-            // Estado para Inclusão de Instrutor (Onboarding)
             const [isNewInstModalOpen, setIsNewInstModalOpen] = useState(false);
             const [newInstData, setNewInstData] = useState({ name: '', isTecnica: false, selectedClasses: [] });
 
-        	
-            
-// Memória dinâmica para os instrutores da Técnica
-const [tecnicaWhitelist, setTecnicaWhitelist] = useState(() => {
-    try {
-        const saved = localStorage.getItem('senacWhitelist_v1');
-        return saved ? JSON.parse(saved) : ['juliana', 'viviane', 'ana claudia', 'jean', 'tatiane', 'katia'];
-    } catch(e) { return ['juliana', 'viviane', 'ana claudia', 'jean', 'tatiane', 'katia']; }
-});
+            const [tecnicaWhitelist, setTecnicaWhitelist] = useState(() => {
+                try {
+                    const saved = localStorage.getItem('senacWhitelist_v1');
+                    return saved ? JSON.parse(saved) : ['juliana', 'viviane', 'ana claudia', 'jean', 'tatiane', 'katia'];
+                } catch(e) { return ['juliana', 'viviane', 'ana claudia', 'jean', 'tatiane', 'katia']; }
+            });
 
-// Função para ligar/desligar a permissão da técnica de um instrutor
-const toggleTecnicaPermission = (nome) => {
-    const normName = normalizeText(nome);
-    let newList;
-    if (tecnicaWhitelist.includes(normName)) {
-        newList = tecnicaWhitelist.filter(n => n !== normName); // Se já tem, remove
-    } else {
-        newList = [...tecnicaWhitelist, normName]; // Se não tem, adiciona
-    }
-    setTecnicaWhitelist(newList);
-    localStorage.setItem('senacWhitelist_v1', JSON.stringify(newList));
-};
+            const toggleTecnicaPermission = (nome) => {
+                const normName = normalizeText(nome);
+                let newList;
+                if (tecnicaWhitelist.includes(normName)) {
+                    newList = tecnicaWhitelist.filter(n => n !== normName);
+                } else {
+                    newList = [...tecnicaWhitelist, normName];
+                }
+                setTecnicaWhitelist(newList);
+                localStorage.setItem('senacWhitelist_v1', JSON.stringify(newList));
+            };
             
             const [isSubModalOpen, setIsSubModalOpen] = useState(false);
             const [newSub, setNewSub] = useState({ 
-                isDefinitive: false, 
-                dataInicio: '', dataFim: '', 
+                isDefinitive: false, dataInicio: '', dataFim: '', 
                 turmaId: '', instrutorAusente: '', instrutorSubstituto: '', motivo: '' 
             });
             
@@ -275,18 +328,30 @@ const toggleTecnicaPermission = (nome) => {
             const [emailConfigModal, setEmailConfigModal] = useState(false);
             const [emailPeriod, setEmailPeriod] = useState({ start: '', end: '' });
 
-            // --- INÍCIO DO PASSO 2: LÓGICA DO FIREBASE ---
+            // === 2. VERIFICADOR DE LOGIN (Ouvinte do Firebase) ===
             useEffect(() => {
-                if (!window.remoteDB) return;
+                if (!window.auth || !window.authMethods) {
+                    setAuthChecking(false);
+                    return;
+                }
+                const unsubscribe = window.authMethods.onAuthStateChanged(window.auth, (currentUser) => {
+                    setUser(currentUser);
+                    setAuthChecking(false);
+                });
+                return () => unsubscribe();
+            }, []);
+
+            // === 3. LÓGICA DO FIREBASE (Câmera ao Vivo) ===
+            useEffect(() => {
+                // Trava de Segurança: Só liga a câmera se o usuário estiver logado
+                if (!user) return;
+                if (!window.remoteDB || !window.dbMethods) return;
 
                 const { doc, onSnapshot } = window.dbMethods;
                 
-                // Fica "ouvindo" a nuvem o tempo todo
                 const unsub = onSnapshot(doc(window.remoteDB, "sgt", "dadosGerais"), (docSnap) => {
                     if (docSnap.exists()) {
                         const dbData = docSnap.data();
-                        
-                        // Formata os dados ao baixar da nuvem
                         const parsedData = (dbData.data || []).map(r => ({...r, modalidade: getSafeModalidade(r)}));
                         
                         setData(parsedData);
@@ -295,24 +360,21 @@ const toggleTecnicaPermission = (nome) => {
                     }
                 });
 
-                return () => unsub(); // Limpa a conexão ao fechar a tela
-            }, []);
+                return () => unsub();
+            }, [user]);
 
-            // --- INÍCIO DA FUNÇÃO PERSIST DEFINITIVA ---
+            // === 4. FUNÇÃO PERSIST DEFINITIVA ===
             const persist = async (newData, newSubs, newLogs) => {
                 setIsSaving(true);
                 
-                // 1. Atualiza a tela instantaneamente (Estado Local)
                 setData(newData);
-                setSubstitutions(newSubs); // <-- O ERRO ESTAVA NESSA LINHA! (corrigido)
+                setSubstitutions(newSubs); 
                 if(newLogs) setLogs(newLogs);
                 
-                // 2. Salva no cache do navegador (Backup Rápido)
                 localStorage.setItem(DB_KEY, JSON.stringify(newData));
                 localStorage.setItem(SUB_KEY, JSON.stringify(newSubs));
                 if(newLogs) localStorage.setItem(LOG_KEY, JSON.stringify(newLogs));
                 
-                // 3. Salva DIRETO no Firebase na mesma hora (Sem atrasos)
                 if (window.remoteDB && window.dbMethods) {
                     try {
                         const { doc, setDoc } = window.dbMethods;
@@ -325,15 +387,23 @@ const toggleTecnicaPermission = (nome) => {
                         console.log("🔥 Salvo no Firebase com sucesso!");
                     } catch (e) {
                         console.error("Erro ao salvar na nuvem: ", e);
-                        showNotify("Erro ao sincronizar com a nuvem.", "error");
                     }
                 }
                 
                 setLastSaved(new Date());
-                setTimeout(() => setIsSaving(false), 500); // Isso apaga o aviso "Salvando..."
+                setTimeout(() => setIsSaving(false), 500); 
             };            
-            // --- FIM DA FUNÇÃO PERSIST DEFINITIVA ---
 
+            // === 5. AS TRAVAS DA TELA (ATENÇÃO AQUI) ===
+            // 👇 SE VOCÊ TIVER MAIS USE_EFFECTS OU USE_MEMOS ABAIXO DESSA LINHA, MOVA ESSES DOIS "IF"S LÁ PARA O FUNDO DA FUNÇÃO APP(), LOGO ANTES DO SEU "return (<div className..." PRINCIPAL.
+            if (authChecking) {
+                return <div className="min-h-screen flex items-center justify-center bg-slate-50 font-bold text-slate-500">Verificando credenciais de acesso...</div>;
+            }
+
+            if (!user) {
+                return <LoginScreen />;
+            }
+          
             const addLog = (type, classId, before, after) => {
                 const newLog = { id: Date.now(), timestamp: new Date().toISOString(), type, classId, before: typeof before === 'object' ? JSON.stringify(before) : safeString(before), after: typeof after === 'object' ? JSON.stringify(after) : safeString(after) };
                 return [newLog, ...logs];
