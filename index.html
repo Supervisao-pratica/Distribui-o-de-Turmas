@@ -1705,14 +1705,6 @@ const handleClearAllData = () => {
             const totalInstrutoresAtivos = dashboardInstructors.length;
             const totalAlunosGeral = dashboardInstructors.reduce((acc, inst) => acc + inst.totalAlunos, 0);
             const mediaAlunosPorInstrutor = totalInstrutoresAtivos > 0 ? Math.round(totalAlunosGeral / totalInstrutoresAtivos) : 0;
-// === AS TRAVAS DA TELA AGORA FICAM AQUI NO FINAL! ===
-            if (authChecking) {
-                return <div className="min-h-screen flex items-center justify-center bg-slate-50 font-bold text-slate-500">Verificando credenciais de acesso...</div>;
-            }
-
-            if (!user) {
-                return <LoginScreen />;
-            }
 
             // === O DESENHO DO SISTEMA COMEÇA AQUI ===
             return (
