@@ -428,6 +428,9 @@
                             localStorage.setItem(EXTRA_INSTRUCTORS_KEY, JSON.stringify(cleanExtra));
                         }
                     }
+                }, (error) => {
+                    console.error("Erro ao ler Firebase: ", error);
+                    showNotify(`Firebase: falha ao ler dados (${error.code || 'erro'}). Confirme login e regras.`, "error");
                 });
 
                 return () => unsub();
@@ -449,6 +452,9 @@
                 
                 if (!LOCAL_TEST_MODE && window.remoteDB && window.dbMethods) {
                     try {
+                        if (!window.auth || !window.auth.currentUser) {
+                            throw new Error("Usuário não autenticado no Firebase Auth.");
+                        }
                         const { doc, setDoc } = window.dbMethods;
                         await setDoc(doc(window.remoteDB, "sgt", "dadosGerais"), {
                             data: newData,
@@ -461,6 +467,7 @@
                         console.log("🔥 Salvo no Firebase com sucesso!");
                     } catch (e) {
                         console.error("Erro ao salvar na nuvem: ", e);
+                        showNotify(`Firebase: falha ao salvar (${e.code || e.message || 'erro'}).`, "error");
                     }
                 } else if (LOCAL_TEST_MODE) {
                     console.log("Modo teste local ativo: salvo apenas no navegador.");
