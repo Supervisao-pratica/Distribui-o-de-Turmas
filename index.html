@@ -81,37 +81,58 @@
             @page { margin: 1cm; size: landscape; }
         }
     </style>
+<script>
+      // Altere para false quando quiser voltar a usar Firebase.
+      window.SGT_LOCAL_TEST_MODE = false;
+    </script>
 <script type="module">
-      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-      // 1. Todas as ferramentas do Firestore que o sistema precisa
-      import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-      // 2. Todas as ferramentas de Autenticação (Login)
-      import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+      // MODO TESTE LOCAL:
+      // true  = não importa Firebase, não lê nuvem e não grava nuvem.
+      // false = volta a usar Firebase normalmente.
+      const LOCAL_TEST_MODE = window.SGT_LOCAL_TEST_MODE === true;
 
-      const firebaseConfig = {
-        apiKey: "AIzaSyAdjsftZXsQ00waKGsLDeY7lDqRgeU_DnM",
-        authDomain: "sgt-senac.firebaseapp.com",
-        projectId: "sgt-senac",
-        storageBucket: "sgt-senac.firebasestorage.app",
-        messagingSenderId: "278613531988",
-        appId: "1:278613531988:web:51af3366f7199c274b3cc1"
-      };
+      if (LOCAL_TEST_MODE) {
+        window.remoteDB = null;
+        window.dbMethods = null;
+        window.auth = null;
+        window.authMethods = {
+          signInWithEmailAndPassword: async () => ({ user: { email: "modo-teste-local@senac.local", localMode: true } }),
+          onAuthStateChanged: (_auth, callback) => {
+            setTimeout(() => callback({ email: "modo-teste-local@senac.local", localMode: true }), 0);
+            return () => {};
+          },
+          signOut: async () => {
+            console.log("Modo teste local ativo: logout Firebase ignorado.");
+          }
+        };
+      } else {
+        const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js");
+        const { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, onSnapshot } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js");
+        const { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js");
 
-      const app = initializeApp(firebaseConfig);
-      const db = getFirestore(app);
-      const auth = getAuth(app); // Inicializa o motor de senhas
+        const firebaseConfig = {
+          apiKey: "AIzaSyAdjsftZXsQ00waKGsLDeY7lDqRgeU_DnM",
+          authDomain: "sgt-senac.firebaseapp.com",
+          projectId: "sgt-senac",
+          storageBucket: "sgt-senac.firebasestorage.app",
+          messagingSenderId: "278613531988",
+          appId: "1:278613531988:web:51af3366f7199c274b3cc1"
+        };
 
-      // 3. Exportando o Banco de Dados e as funções para o React acessar
-      window.remoteDB = db;
-      window.dbMethods = { 
-        collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, onSnapshot 
-      };
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
 
-      // 4. Exportando a Autenticação para o React acessar
-      window.auth = auth;
-      window.authMethods = {
-        signInWithEmailAndPassword, onAuthStateChanged, signOut
-      };
+        window.remoteDB = db;
+        window.dbMethods = {
+          collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, onSnapshot
+        };
+
+        window.auth = auth;
+        window.authMethods = {
+          signInWithEmailAndPassword, onAuthStateChanged, signOut
+        };
+      }
     </script>
     </head>
 <body>
@@ -183,7 +204,9 @@
         const INITIAL_DB = [];
 
         const getSafeModalidade = (row) => {
-            if (row.modalidade) return row.modalidade;
+            if (row.modalidade) {
+                return normalizeText(row.modalidade).includes('tecnica') ? 'Técnica' : 'Aperfeiçoamento';
+            }
             const cNorm = normalizeText(row.curso);
             if (cNorm.includes('tecnica') || cNorm.includes('empresas')) return 'Técnica';
             return 'Aperfeiçoamento';
@@ -235,9 +258,13 @@
         const DB_KEY = 'senacData_v45'; 
         const SUB_KEY = 'senacSubs_v45';
         const LOG_KEY = 'senacLogs_v65';
+        const BLOCK_KEY = 'senacBlockedInstructors_v1';
+        const EXTRA_INSTRUCTORS_KEY = 'senacExtraInstructors_v1';
+        const LAST_REBALANCE_KEY = 'senacLastRebalanceAt_v1';
+        const LOCAL_TEST_MODE = window.SGT_LOCAL_TEST_MODE === true;
         
         // Blocklist
-        const BLOCKED_INSTRUCTORS = ['fabio', 'lilian'];
+        const BLOCKED_INSTRUCTORS = ['fabio', 'lilian', 'luciano', 'claire'];
         
         // Whitelist Técnica
         const TECNICA_WHITELIST = ['juliana', 'viviane', 'ana claudia', 'jean', 'tatiane', 'katia'];
@@ -283,6 +310,7 @@
             const [dashboardView, setDashboardView] = useState('instructors');
             const [reportType, setReportType] = useState('geral');
             const fileInputRef = useRef(null);
+            const blockedCleanupRunningRef = useRef(false);
 
             const [filters, setFilters] = useState({ instrutor: '', analista: '', modalidade: '', curso: '', turma: '', dataTransferencia: '' });
             const [isFormOpen, setIsFormOpen] = useState(false);
@@ -295,6 +323,26 @@
                     const saved = localStorage.getItem('senacWhitelist_v1');
                     return saved ? JSON.parse(saved) : ['juliana', 'viviane', 'ana claudia', 'jean', 'tatiane', 'katia'];
                 } catch(e) { return ['juliana', 'viviane', 'ana claudia', 'jean', 'tatiane', 'katia']; }
+            });
+
+            const [blockedInstructors, setBlockedInstructors] = useState(() => {
+                try {
+                    const saved = localStorage.getItem(BLOCK_KEY);
+                    const savedList = saved ? JSON.parse(saved) : [];
+                    return [...new Set([...BLOCKED_INSTRUCTORS, ...savedList].map(normalizeText).filter(Boolean))];
+                } catch(e) {
+                    return [...BLOCKED_INSTRUCTORS];
+                }
+            });
+
+            const [extraInstructors, setExtraInstructors] = useState(() => {
+                try {
+                    const saved = localStorage.getItem(EXTRA_INSTRUCTORS_KEY);
+                    const savedList = saved ? JSON.parse(saved) : [];
+                    return Array.isArray(savedList) ? savedList.map(safeString).filter(Boolean) : [];
+                } catch(e) {
+                    return [];
+                }
             });
 
             const toggleTecnicaPermission = (nome) => {
@@ -324,23 +372,39 @@
             const [emailConfigModal, setEmailConfigModal] = useState(false);
             const [emailPeriod, setEmailPeriod] = useState({ start: '', end: '' });
 
-            // === 2. VERIFICADOR DE LOGIN (Ouvinte do Firebase) ===
+            // === MODO TESTE LOCAL: carrega somente dados do navegador ===
             useEffect(() => {
-                if (!window.auth || !window.authMethods) {
-                    setAuthChecking(false);
-                    return;
+                if (!user || !LOCAL_TEST_MODE) return;
+
+                try {
+                    const localData = JSON.parse(localStorage.getItem(DB_KEY) || '[]');
+                    const localSubs = JSON.parse(localStorage.getItem(SUB_KEY) || '[]');
+                    const localLogs = JSON.parse(localStorage.getItem(LOG_KEY) || '[]');
+                    const localBlocked = JSON.parse(localStorage.getItem(BLOCK_KEY) || '[]');
+                    const localExtraInstructors = JSON.parse(localStorage.getItem(EXTRA_INSTRUCTORS_KEY) || '[]');
+
+                    setData((Array.isArray(localData) ? localData : []).map(r => ({ ...r, modalidade: getSafeModalidade(r) })));
+                    setSubstitutions(Array.isArray(localSubs) ? localSubs : []);
+                    setLogs(Array.isArray(localLogs) ? localLogs : []);
+                    setExtraInstructors(Array.isArray(localExtraInstructors) ? localExtraInstructors.map(safeString).filter(Boolean) : []);
+
+                    if (Array.isArray(localBlocked)) {
+                        const mergedBlocked = [...new Set([...BLOCKED_INSTRUCTORS, ...localBlocked].map(normalizeText).filter(Boolean))];
+                        setBlockedInstructors(mergedBlocked);
+                        localStorage.setItem(BLOCK_KEY, JSON.stringify(mergedBlocked));
+                    }
+
+                    setLastSaved(new Date());
+                } catch (e) {
+                    console.error("Erro ao carregar dados locais: ", e);
                 }
-                const unsubscribe = window.authMethods.onAuthStateChanged(window.auth, (currentUser) => {
-                    setUser(currentUser);
-                    setAuthChecking(false);
-                });
-                return () => unsubscribe();
-            }, []);
+            }, [user]);
 
             // === 3. LÓGICA DO FIREBASE (Câmera ao Vivo) ===
             useEffect(() => {
                 // Trava de Segurança: Só liga a câmera se o usuário estiver logado
                 if (!user) return;
+                if (LOCAL_TEST_MODE) return;
                 if (!window.remoteDB || !window.dbMethods) return;
 
                 const { doc, onSnapshot } = window.dbMethods;
@@ -353,6 +417,16 @@
                         setData(parsedData);
                         setLogs(dbData.logs || []);
                         setSubstitutions(dbData.substitutions || []);
+                        if (Array.isArray(dbData.blockedInstructors)) {
+                            const mergedBlocked = [...new Set([...BLOCKED_INSTRUCTORS, ...dbData.blockedInstructors].map(normalizeText).filter(Boolean))];
+                            setBlockedInstructors(mergedBlocked);
+                            localStorage.setItem(BLOCK_KEY, JSON.stringify(mergedBlocked));
+                        }
+                        if (Array.isArray(dbData.extraInstructors)) {
+                            const cleanExtra = dbData.extraInstructors.map(safeString).filter(Boolean);
+                            setExtraInstructors(cleanExtra);
+                            localStorage.setItem(EXTRA_INSTRUCTORS_KEY, JSON.stringify(cleanExtra));
+                        }
                     }
                 });
 
@@ -360,7 +434,8 @@
             }, [user]);
 
             // === 4. FUNÇÃO PERSIST DEFINITIVA ===
-            const persist = async (newData, newSubs, newLogs) => {
+            const persist = async (newData, newSubs, newLogs, nextBlockedInstructors = null) => {
+                const blockedToSave = Array.isArray(nextBlockedInstructors) ? nextBlockedInstructors : blockedInstructors;
                 setIsSaving(true);
                 
                 setData(newData);
@@ -370,20 +445,25 @@
                 localStorage.setItem(DB_KEY, JSON.stringify(newData));
                 localStorage.setItem(SUB_KEY, JSON.stringify(newSubs));
                 if(newLogs) localStorage.setItem(LOG_KEY, JSON.stringify(newLogs));
+                localStorage.setItem(BLOCK_KEY, JSON.stringify(blockedToSave));
                 
-                if (window.remoteDB && window.dbMethods) {
+                if (!LOCAL_TEST_MODE && window.remoteDB && window.dbMethods) {
                     try {
                         const { doc, setDoc } = window.dbMethods;
                         await setDoc(doc(window.remoteDB, "sgt", "dadosGerais"), {
                             data: newData,
                             logs: newLogs || logs,
                             substitutions: newSubs,
+                            blockedInstructors: blockedToSave,
+                            extraInstructors,
                             lastUpdate: new Date().toISOString()
                         });
                         console.log("🔥 Salvo no Firebase com sucesso!");
                     } catch (e) {
                         console.error("Erro ao salvar na nuvem: ", e);
                     }
+                } else if (LOCAL_TEST_MODE) {
+                    console.log("Modo teste local ativo: salvo apenas no navegador.");
                 }
                 
                 setLastSaved(new Date());
@@ -402,13 +482,7 @@
                 setTimeout(() => setNotification(null), 4000);
             };
 
-            const hardReset = () => {
-                if(confirm("Deseja apagar TODOS os dados e zerar o painel?")) {
-                    localStorage.clear();
-                    window.location.reload();
-                }
-            };
-
+            
             const handleOpenEdit = (classData) => {
                 // Adicionamos o 'originalId' para o sistema lembrar qual era o número antes da edição
                 setEditingClass({...classData, modalidade: getSafeModalidade(classData), originalId: classData.id});
@@ -426,6 +500,12 @@
                         showNotify("Erro: Já existe outra turma com este número no sistema!", "error");
                         return;
                     }
+                }
+
+                const duplicateInstructor = getDuplicateInstructorInClass(editingClass);
+                if (duplicateInstructor) {
+                    showNotify("Erro: o mesmo instrutor não pode ser Instrutor 1, 2 ou 3 na mesma turma.", "error");
+                    return;
                 }
 
                 const oldData = data.find(d => String(d.id) === String(editingClass.originalId));
@@ -526,7 +606,7 @@ const handleClearAllData = () => {
 
             const canonicalNameMap = useMemo(() => {
                 const map = {};
-                const allNames = data.flatMap(d => [d.instrutor1, d.instrutor2, d.instrutor3, d.analista]);
+                const allNames = [...data.flatMap(d => [d.instrutor1, d.instrutor2, d.instrutor3, d.analista]), ...extraInstructors];
                 allNames.forEach(name => {
                     const sName = safeString(name);
                     if(!sName) return;
@@ -534,7 +614,7 @@ const handleClearAllData = () => {
                     if (!map[key]) map[key] = sName;
                 });
                 return map;
-            }, [data]);
+            }, [data, extraInstructors]);
 
             const getCanonical = (name) => {
                 const sName = safeString(name);
@@ -542,10 +622,34 @@ const handleClearAllData = () => {
                 return canonicalNameMap[normalizeText(sName)] || sName;
             };
 
+            const getClassInstructorRoles = (turma) => {
+                return getSafeModalidade(turma) === 'Técnica' || safeString(turma.instrutor3) || safeString(turma.dataTransferencia2)
+                    ? ['instrutor1', 'instrutor2', 'instrutor3']
+                    : ['instrutor1', 'instrutor2'];
+            };
+
+            const getDuplicateInstructorInClass = (turma) => {
+                const seen = {};
+                const roles = getClassInstructorRoles(turma);
+
+                for (const role of roles) {
+                    const norm = normalizeText(turma[role]);
+                    if (!norm) continue;
+                    if (seen[norm]) {
+                        return { nome: turma[role], firstRole: seen[norm], secondRole: role };
+                    }
+                    seen[norm] = role;
+                }
+
+                return null;
+            };
+
             const uniqueInstrutores = useMemo(() => {
-                const raw = data.flatMap(d => [d.instrutor1, d.instrutor2, d.instrutor3]).map(safeString).filter(Boolean);
-                return [...new Set(raw.map(n => getCanonical(n)))].sort();
-            }, [data, canonicalNameMap]);
+                const raw = [...data.flatMap(d => [d.instrutor1, d.instrutor2, d.instrutor3]), ...extraInstructors].map(safeString).filter(Boolean);
+                return [...new Set(raw.map(n => getCanonical(n)))]
+                    .filter(n => !blockedInstructors.includes(normalizeText(n)))
+                    .sort();
+            }, [data, extraInstructors, canonicalNameMap, blockedInstructors]);
 
             const uniqueAnalistas = useMemo(() => {
                 const raw = data.map(d => safeString(d.analista)).filter(Boolean);
@@ -577,7 +681,7 @@ const handleClearAllData = () => {
                 if (row.instrutor2 && safeString(row.dataTransferencia).length === 10) {
                     events.push({ d: new Date(row.dataTransferencia + 'T00:00:00'), inst: row.instrutor2, tag: 'Transferido (P1)' });
                 }
-                if (row.instrutor3 && safeString(row.dataTransferencia2).length === 10) {
+                if (getSafeModalidade(row) === 'Técnica' && row.instrutor3 && safeString(row.dataTransferencia2).length === 10) {
                     events.push({ d: new Date(row.dataTransferencia2 + 'T00:00:00'), inst: row.instrutor3, tag: 'Transferido (P2)' });
                 }
                 events.sort((a,b) => a.d - b.d);
@@ -618,6 +722,10 @@ const handleClearAllData = () => {
                 e.preventDefault();
                 const cleanName = safeString(newInstData.name).trim();
                 if (!cleanName) { showNotify("Digite o nome do instrutor.", "error"); return; }
+
+                const nextExtraInstructors = [...new Set([...extraInstructors, cleanName].map(safeString).filter(Boolean))];
+                setExtraInstructors(nextExtraInstructors);
+                localStorage.setItem(EXTRA_INSTRUCTORS_KEY, JSON.stringify(nextExtraInstructors));
                 
                 // Salva a permissão da técnica permanentemente no sistema
                 if (newInstData.isTecnica) {
@@ -630,7 +738,7 @@ const handleClearAllData = () => {
                 }
 
                 if (newInstData.selectedClasses.length === 0) {
-                    showNotify(`Instrutor(a) ${cleanName} habilitado(a) no sistema! (Sem turmas iniciais)`);
+                    showNotify(`Instrutor(a) ${cleanName} habilitado(a). Ele(a) já entra no próximo Equilibrar Turmas.`);
                     setIsNewInstModalOpen(false);
                     setNewInstData({ name: '', isTecnica: false, selectedClasses: [] });
                     return; 
@@ -644,14 +752,26 @@ const handleClearAllData = () => {
                         let updated = { ...d };
                         const info = getActiveInfoOnDate(updated, targetDateObj);
                         const activeInst = getCanonical(info.inst);
+                        let roleToUpdate = '';
                         
                         if (activeInst) {
-                            if (getCanonical(updated.instrutor1) === activeInst) updated.instrutor1 = cleanName;
-                            if (getCanonical(updated.instrutor2) === activeInst) updated.instrutor2 = cleanName;
-                            if (getCanonical(updated.instrutor3) === activeInst) updated.instrutor3 = cleanName;
+                            if (getCanonical(updated.instrutor1) === activeInst) roleToUpdate = 'instrutor1';
+                            if (getCanonical(updated.instrutor2) === activeInst) roleToUpdate = 'instrutor2';
+                            if (getCanonical(updated.instrutor3) === activeInst) roleToUpdate = 'instrutor3';
                         } else {
-                            updated.instrutor1 = cleanName;
+                            roleToUpdate = 'instrutor1';
                         }
+
+                        const alreadyInOtherRole = getClassInstructorRoles(updated)
+                            .filter(role => role !== roleToUpdate)
+                            .some(role => normalizeText(updated[role]) === normalizeText(cleanName));
+
+                        if (alreadyInOtherRole) {
+                            changesLog.push(`${updated.id} (${updated.curso}) não alterada: ${cleanName} já está em outro papel da turma`);
+                            return updated;
+                        }
+
+                        updated[roleToUpdate] = cleanName;
                         changesLog.push(`${updated.id} (${updated.curso}) repassada para ${cleanName}`);
                         return updated;
                     }
@@ -661,7 +781,7 @@ const handleClearAllData = () => {
                 const newLogs = addLog("Onboarding de Instrutor", "Lote", "Múltiplas", changesLog.join(' | '));
                 persist(newData, substitutions, newLogs);
                 
-                showNotify(`Sucesso! ${cleanName} cadastrado(a) assumindo ${newInstData.selectedClasses.length} turma(s)!`);
+                showNotify(`Sucesso! ${cleanName} cadastrado(a) e incluído(a) no equilíbrio automático.`);
                 setIsNewInstModalOpen(false);
                 setNewInstData({ name: '', isTecnica: false, selectedClasses: [] });
             };
@@ -728,7 +848,7 @@ const handleClearAllData = () => {
                 setTimeout(() => setNotification(null), 3000);
             };
 
-            const getRankedInstructorOptions = (targetCourse, excludedInstructors = [], slotType = 'any', targetModalidade = 'Aperfeiçoamento', pendingData = [], customPool = null, evaluationDate = null) => {
+            const getRankedInstructorOptions = (targetCourse, excludedInstructors = [], slotType = 'any', targetModalidade = 'Aperfeiçoamento', pendingData = [], customPool = null, evaluationDate = null, baseDataOverride = null) => {
                 const stats = {};
                 const isTecnica = targetModalidade === 'Técnica';
                 const pool = customPool || uniqueInstrutores;
@@ -737,7 +857,7 @@ const handleClearAllData = () => {
                     .filter(Boolean)
                     .map(normalizeText);
 
-                let allowedInstructors = pool.filter(name => !BLOCKED_INSTRUCTORS.includes(normalizeText(name)));
+                let allowedInstructors = pool.filter(name => !blockedInstructors.includes(normalizeText(name)));
                 if (isTecnica) {
                     allowedInstructors = allowedInstructors.filter(name => tecnicaWhitelist.includes(normalizeText(name)));
                 }
@@ -748,7 +868,7 @@ const handleClearAllData = () => {
                 });
 
                 const normalizedTarget = normalizeText(targetCourse);
-                const allData = [...data, ...pendingData];
+                const allData = baseDataOverride !== null ? [...baseDataOverride, ...pendingData] : [...data, ...pendingData];
                 
                 const evalDateStr = (evaluationDate && evaluationDate.length === 10) ? evaluationDate : viewDate;
                 const targetDateObj = new Date(evalDateStr + 'T00:00:00'); 
@@ -782,8 +902,6 @@ const handleClearAllData = () => {
                         let emoji = "✅";
                         let flags = [];
                         
-                        const isEquipeTecnica = tecnicaWhitelist.includes(normalizeText(inst.nome));
-
                         if (inst.turmasDoCurso >= 3) {
                             score += 300; 
                             emoji = "⚠️"; type = "warning";
@@ -795,34 +913,22 @@ const handleClearAllData = () => {
                             flags.push(`⭐ Novo no Curso`);
                         }
 
-                        if (inst.totalAlunos >= 250) {
+                        if (inst.totalAlunos >= BALANCE_LIMITS.max) {
                             score += 50000; emoji = "🔴"; type = "bad"; 
                             flags.push(`🔴 Carga Máxima (Não Alocar)`);
-                        } else if (inst.totalAlunos >= 200) {
+                        } else if (inst.totalAlunos >= BALANCE_LIMITS.min + BALANCE_LIMITS.maxGap) {
                             score += 300; if(emoji === "✅" || emoji === "⭐") emoji = "🟡"; type = "warning"; 
                             flags.push(`🟡 Carga Alta`);
                         }
 
-                        if (inst.totalAlunos < 100) {
-                            score -= 1000; 
+                        if (inst.totalAlunos < BALANCE_LIMITS.min - 50) {
+                            score -= 1500; 
                             if(emoji === "✅" || emoji === "⭐") emoji = "🚀";
                             flags.push(`🚀 Urgente: Ocioso`);
-                        } else if (inst.totalAlunos < 150) {
-                            score -= 500;
+                        } else if (inst.totalAlunos < BALANCE_LIMITS.min) {
+                            score -= 900;
                             if(emoji === "✅" || emoji === "⭐") emoji = "🚀";
-                            flags.push(`🚀 Prioridade de Carga`);
-                        }
-
-                        if (isEquipeTecnica) {
-                            if (inst.totalAlunos < 200) {
-                                score -= 2000; 
-                                if(emoji === "✅" || emoji === "⭐" || emoji === "🚀") emoji = "🔥";
-                                flags.push(`🔥 Foco Técnica`);
-                            } 
-                            if (!isTecnica && inst.totalAlunos >= 150) {
-                                score += 300;
-                                flags.push(`🛡️ Preferência Técnica`);
-                            }
+                            flags.push(`🚀 Prioridade: abaixo de ${BALANCE_LIMITS.min}`);
                         }
 
                         const totalRoles = inst.countAsInst1 + inst.countAsInst2;
@@ -839,6 +945,1620 @@ const handleClearAllData = () => {
                     })
                     .sort((a,b) => a.score - b.score);
             };
+// === IA: REBALANCEAMENTO FUTURO DE INSTRUTORES ===
+const BALANCE_LIMITS = {
+    min: 200,
+    ideal: 235,
+    max: 270,
+    hardMax: 280,
+    maxGap: 40,
+    maxSameCourse: 3,
+    monthsAhead: 0,
+    maxMoves: 220
+};
+
+const isBlockedInstructorName = (nome) => {
+    return blockedInstructors.includes(normalizeText(nome));
+};
+
+const isTecnicaInstructor = (nome) => {
+    return tecnicaWhitelist.includes(normalizeText(nome));
+};
+
+const getBalanceRolesForClass = (turma) => {
+    return getClassInstructorRoles(turma);
+};
+
+const getBalanceDateStr = (dateObj) => {
+    const y = dateObj.getFullYear();
+    const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const d = String(dateObj.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+};
+
+const getActiveRoleOnBalanceDate = (row, dateStr) => {
+    const dateObj = new Date(dateStr + 'T00:00:00');
+    const info = getActiveInfoOnDate(row, dateObj);
+
+    if (!info.inst || info.status === 'Finalizado' || info.status === 'Agendado') return null;
+
+    const events = [];
+
+    if (row.instrutor1) {
+        events.push({
+            role: 'instrutor1',
+            inst: row.instrutor1,
+            d: row.inicio && row.inicio.length === 10 ? new Date(row.inicio + 'T00:00:00') : new Date('1970-01-01T00:00:00')
+        });
+    }
+
+    if (row.instrutor2 && safeString(row.dataTransferencia).length === 10) {
+        events.push({
+            role: 'instrutor2',
+            inst: row.instrutor2,
+            d: new Date(row.dataTransferencia + 'T00:00:00')
+        });
+    }
+
+    if (getSafeModalidade(row) === 'Técnica' && row.instrutor3 && safeString(row.dataTransferencia2).length === 10) {
+        events.push({
+            role: 'instrutor3',
+            inst: row.instrutor3,
+            d: new Date(row.dataTransferencia2 + 'T00:00:00')
+        });
+    }
+
+    events.sort((a, b) => a.d - b.d);
+
+    let active = null;
+    events.forEach(ev => {
+        if (dateObj >= ev.d) active = ev;
+    });
+
+    if (!active) return null;
+
+    return {
+        role: active.role,
+        inst: getCanonical(active.inst)
+    };
+};
+
+const getFutureBalanceDates = (rows) => {
+    const dates = new Set();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let latestRelevantDate = new Date(today);
+
+    dates.add(getBalanceDateStr(today));
+
+    rows.forEach(row => {
+        ['inicio', 'dataTransferencia', 'dataTransferencia2', 'termino'].forEach(field => {
+            const value = safeString(row[field]);
+            if (value.length === 10) {
+                const dateValue = new Date(value + 'T00:00:00');
+                if (dateValue > latestRelevantDate) latestRelevantDate = dateValue;
+                if (dateValue >= today) {
+                    dates.add(value);
+                }
+                if (field === 'termino') {
+                    const afterEnd = new Date(dateValue);
+                    afterEnd.setDate(afterEnd.getDate() + 1);
+                    if (afterEnd >= today) dates.add(getBalanceDateStr(afterEnd));
+                }
+            }
+        });
+    });
+
+    if (BALANCE_LIMITS.monthsAhead > 0) {
+        const minimumHorizon = new Date(today.getFullYear(), today.getMonth() + BALANCE_LIMITS.monthsAhead, 1);
+        if (minimumHorizon > latestRelevantDate) latestRelevantDate = minimumHorizon;
+    }
+
+    const safetyLimit = new Date(today.getFullYear() + 5, today.getMonth(), 1);
+    if (latestRelevantDate > safetyLimit) latestRelevantDate = safetyLimit;
+
+    const cursor = new Date(today.getFullYear(), today.getMonth(), 1);
+    while (cursor <= latestRelevantDate) {
+        dates.add(getBalanceDateStr(cursor));
+        cursor.setMonth(cursor.getMonth() + 1);
+    }
+
+    rows.forEach(row => {
+        ['inicio', 'dataTransferencia', 'dataTransferencia2', 'termino'].forEach(field => {
+            const value = safeString(row[field]);
+            if (value.length === 10 && new Date(value + 'T00:00:00') >= today && new Date(value + 'T00:00:00') <= latestRelevantDate) {
+                dates.add(value);
+            }
+        });
+    });
+
+    return [...dates].sort();
+};
+
+const getBalanceSnapshot = (rows, dateStr, instructorPoolOverride = null) => {
+    const map = {};
+
+    const balanceNames = [
+        ...uniqueInstrutores,
+        ...extraInstructors,
+        ...(instructorPoolOverride || []),
+        ...rows.flatMap(row => getBalanceRolesForClass(row).map(role => row[role]))
+    ];
+
+    [...new Set(balanceNames.map(safeString).filter(Boolean).map(nome => getCanonical(nome)))]
+        .filter(nome => !isBlockedInstructorName(nome))
+        .forEach(nome => {
+            map[normalizeText(nome)] = {
+                nome,
+                totalAlunos: 0,
+                totalTurmas: 0,
+                cursos: {}
+            };
+        });
+
+    rows.forEach(row => {
+        const active = getActiveRoleOnBalanceDate(row, dateStr);
+        if (!active || isBlockedInstructorName(active.inst)) return;
+
+        const key = normalizeText(active.inst);
+        if (!map[key]) {
+            map[key] = {
+                nome: active.inst,
+                totalAlunos: 0,
+                totalTurmas: 0,
+                cursos: {}
+            };
+        }
+
+        const alunos = parseInt(row.alunos) || 0;
+        const courseKey = `${getSafeModalidade(row)}|${safeString(row.curso)}`;
+
+        map[key].totalAlunos += alunos;
+        map[key].totalTurmas += 1;
+        map[key].cursos[courseKey] = (map[key].cursos[courseKey] || 0) + 1;
+    });
+
+    return Object.values(map);
+};
+
+const getBalanceTargetsForSnapshot = (snapshot) => {
+    const base = snapshot || [];
+    const totalAlunos = base.reduce((acc, inst) => acc + inst.totalAlunos, 0);
+    const avg = base.length > 0 ? Math.round(totalAlunos / base.length) : 0;
+    const halfGap = Math.floor(BALANCE_LIMITS.maxGap / 2);
+    const isMinPossible = base.length > 0 ? totalAlunos >= (BALANCE_LIMITS.min * base.length) : true;
+
+    if (!isMinPossible) {
+        const lowVolumeMin = Math.max(0, avg - halfGap);
+        return {
+            avg,
+            effectiveMin: lowVolumeMin,
+            effectiveIdeal: avg,
+            effectiveMax: lowVolumeMin + BALANCE_LIMITS.maxGap,
+            totalAlunos,
+            isMinPossible
+        };
+    }
+
+    let effectiveMin = Math.max(BALANCE_LIMITS.min, avg - halfGap);
+    let effectiveMax = effectiveMin + BALANCE_LIMITS.maxGap;
+
+    if (avg > effectiveMax) {
+        effectiveMax = avg;
+        effectiveMin = Math.max(avg - BALANCE_LIMITS.maxGap, BALANCE_LIMITS.min);
+    }
+
+    if (effectiveMax > BALANCE_LIMITS.max && avg <= BALANCE_LIMITS.max) {
+        effectiveMax = BALANCE_LIMITS.max;
+        effectiveMin = Math.max(avg - BALANCE_LIMITS.maxGap, Math.min(effectiveMin, effectiveMax));
+    }
+
+    if (avg > BALANCE_LIMITS.max) {
+        effectiveMax = avg;
+        effectiveMin = Math.max(avg - BALANCE_LIMITS.maxGap, BALANCE_LIMITS.min);
+    }
+
+    const effectiveIdeal = avg || BALANCE_LIMITS.ideal;
+
+    return {
+        avg,
+        effectiveMin,
+        effectiveIdeal,
+        effectiveMax,
+        totalAlunos,
+        isMinPossible
+    };
+};
+
+const getBalancePenaltyForSnapshot = (snapshot) => {
+    if (!snapshot || snapshot.length < 2) {
+        return { penalty: 0, max: null, min: null, gap: 0, ...getBalanceTargetsForSnapshot(snapshot || []) };
+    }
+
+    const sorted = [...snapshot].sort((a, b) => b.totalAlunos - a.totalAlunos);
+    const max = sorted[0];
+    const min = sorted[sorted.length - 1];
+    const gap = max.totalAlunos - min.totalAlunos;
+    const targets = getBalanceTargetsForSnapshot(snapshot);
+
+    let penalty = 0;
+
+    snapshot.forEach(inst => {
+        const aboveMax = Math.max(0, inst.totalAlunos - targets.effectiveMax);
+        const aboveHard = Math.max(0, inst.totalAlunos - BALANCE_LIMITS.hardMax);
+        const belowMin = Math.max(0, targets.effectiveMin - inst.totalAlunos);
+
+        penalty += aboveMax * aboveMax * 18;
+        penalty += aboveHard * aboveHard * 60;
+        penalty += belowMin * belowMin * 12;
+        penalty += Math.abs(inst.totalAlunos - targets.effectiveIdeal) * 2;
+
+        Object.values(inst.cursos || {}).forEach(qtd => {
+            if (qtd > BALANCE_LIMITS.maxSameCourse) {
+                penalty += (qtd - BALANCE_LIMITS.maxSameCourse) * 250;
+            }
+        });
+    });
+
+    if (gap > BALANCE_LIMITS.maxGap) {
+        penalty += (gap - BALANCE_LIMITS.maxGap) * (gap - BALANCE_LIMITS.maxGap) * 35;
+    }
+
+    return { penalty, max, min, gap, ...targets };
+};
+
+const getHardBalanceScore = (snapshot, info = null) => {
+    const balanceInfo = info || getBalancePenaltyForSnapshot(snapshot);
+    const base = snapshot || [];
+    const belowMin = base.reduce((acc, inst) => acc + Math.max(0, balanceInfo.effectiveMin - inst.totalAlunos), 0);
+    const aboveMax = base.reduce((acc, inst) => acc + Math.max(0, inst.totalAlunos - balanceInfo.effectiveMax), 0);
+    const gapOverflow = Math.max(0, (balanceInfo.gap || 0) - BALANCE_LIMITS.maxGap);
+
+    return {
+        hardScore: (belowMin * belowMin * 1200) + (gapOverflow * gapOverflow * 900) + (aboveMax * aboveMax * 250) + (balanceInfo.penalty || 0),
+        belowMin,
+        aboveMax,
+        gapOverflow
+    };
+};
+
+const getTotalBalancePenalty = (rows, datesOverride = null) => {
+    const dates = datesOverride || getFutureBalanceDates(rows);
+    return dates.reduce((acc, dateStr) => {
+        return acc + getBalancePenaltyForSnapshot(getBalanceSnapshot(rows, dateStr)).penalty;
+    }, 0);
+};
+
+const getBalanceImpactDatesForMove = (row, role, allDates, fallbackDateStr) => {
+    const dates = allDates.filter(dateStr => {
+        const active = getActiveRoleOnBalanceDate(row, dateStr);
+        return active && active.role === role;
+    });
+
+    if (!dates.includes(fallbackDateStr)) dates.push(fallbackDateStr);
+    return [...new Set(dates)].sort();
+};
+
+const getBalanceIssues = (rows, datesOverride = null) => {
+    const issues = [];
+
+    const dates = datesOverride || getFutureBalanceDates(rows);
+    dates.forEach(dateStr => {
+        const snapshot = getBalanceSnapshot(rows, dateStr);
+        if (snapshot.length < 2) return;
+
+        const info = getBalancePenaltyForSnapshot(snapshot);
+        if (info.totalAlunos <= 0) return;
+        const hardInfo = getHardBalanceScore(snapshot, info);
+
+        const belowTarget = info.min.totalAlunos < info.effectiveMin;
+        const belowMinimum = info.isMinPossible && info.min.totalAlunos < BALANCE_LIMITS.min;
+
+        if (
+            info.max.totalAlunos > info.effectiveMax ||
+            belowMinimum ||
+            belowTarget ||
+            info.gap > BALANCE_LIMITS.maxGap
+        ) {
+            issues.push({ dateStr, snapshot, ...info, ...hardInfo });
+        }
+    });
+
+    return issues.sort((a, b) => {
+        if (b.hardScore !== a.hardScore) return b.hardScore - a.hardScore;
+        if (b.belowMin !== a.belowMin) return b.belowMin - a.belowMin;
+        if (b.gapOverflow !== a.gapOverflow) return b.gapOverflow - a.gapOverflow;
+        if (b.penalty !== a.penalty) return b.penalty - a.penalty;
+        if (b.max.totalAlunos !== a.max.totalAlunos) return b.max.totalAlunos - a.max.totalAlunos;
+        return b.gap - a.gap;
+    });
+};
+
+const canInstructorReceiveBalanceClass = (row, role, targetName) => {
+    const targetNorm = normalizeText(targetName);
+    if (!targetNorm || isBlockedInstructorName(targetName)) return false;
+
+    const modalidade = getSafeModalidade(row);
+    const isTecnicaRole = modalidade === 'Técnica' || role === 'instrutor3';
+    if (isTecnicaRole && !isTecnicaInstructor(targetName)) return false;
+    if (role === 'instrutor3' && !isTecnicaRole) return false;
+
+    const alreadyInClass = getBalanceRolesForClass(row)
+        .filter(r => r !== role)
+        .map(r => normalizeText(row[r]))
+        .filter(Boolean);
+
+    return !alreadyInClass.includes(targetNorm);
+};
+
+const findBestBalanceMove = (rows, issue, moveHistory, lockedMoveKeys = new Set(), futureDatesOverride = null) => {
+    const overNorm = normalizeText(issue.max.nome);
+    const beforePenalty = issue.penalty || getBalancePenaltyForSnapshot(issue.snapshot).penalty;
+    const beforeHard = getHardBalanceScore(issue.snapshot, issue);
+    const futureDates = futureDatesOverride || getFutureBalanceDates(rows);
+    const beforeGlobalPenalty = getTotalBalancePenalty(rows, futureDates);
+    let bestMove = null;
+
+    const candidates = rows
+        .map((row, index) => {
+            const active = getActiveRoleOnBalanceDate(row, issue.dateStr);
+            if (!active || normalizeText(active.inst) !== overNorm) return null;
+
+            return {
+                row,
+                index,
+                role: active.role,
+                alunos: parseInt(row.alunos) || 0,
+                key: `${safeString(row.id) || index}|${active.role}`
+            };
+        })
+        .filter(Boolean)
+        .filter(item => !lockedMoveKeys.has(item.key))
+        .sort((a, b) => {
+            const idealSize = Math.max(20, Math.round((issue.max.totalAlunos - issue.min.totalAlunos) / 2));
+            return Math.abs(a.alunos - idealSize) - Math.abs(b.alunos - idealSize);
+        })
+        .slice(0, 16);
+
+    candidates.forEach(item => {
+        issue.snapshot
+            .filter(inst => normalizeText(inst.nome) !== overNorm && inst.totalAlunos < issue.max.totalAlunos)
+            .sort((a, b) => a.totalAlunos - b.totalAlunos)
+            .forEach(target => {
+                if (!canInstructorReceiveBalanceClass(item.row, item.role, target.nome)) return;
+
+                const courseKey = `${getSafeModalidade(item.row)}|${safeString(item.row.curso)}`;
+                const sameCourseCount = target.cursos[courseKey] || 0;
+                const afterOver = issue.max.totalAlunos - item.alunos;
+                const afterTarget = target.totalAlunos + item.alunos;
+                const assignmentKey = `${item.key}->${normalizeText(target.nome)}`;
+
+                if (moveHistory.has(assignmentKey)) return;
+
+                if (afterTarget > BALANCE_LIMITS.hardMax) return;
+
+                const simulatedRows = rows.map((row, idx) => {
+                    if (idx !== item.index) return row;
+                    return { ...row, [item.role]: target.nome };
+                });
+                if (getDuplicateInstructorInClass(simulatedRows[item.index])) return;
+                const afterSnapshot = getBalanceSnapshot(simulatedRows, issue.dateStr);
+                const afterInfo = getBalancePenaltyForSnapshot(afterSnapshot);
+                const afterHard = getHardBalanceScore(afterSnapshot, afterInfo);
+                const improvement = beforePenalty - afterInfo.penalty;
+                const hardImprovement = beforeHard.hardScore - afterHard.hardScore;
+                const afterGlobalPenalty = getTotalBalancePenalty(simulatedRows, futureDates);
+                const globalImprovement = beforeGlobalPenalty - afterGlobalPenalty;
+
+                if (globalImprovement <= 0) return;
+
+                const afterTargetInfo = afterSnapshot.find(inst => normalizeText(inst.nome) === normalizeText(target.nome));
+                const afterOverInfo = afterSnapshot.find(inst => normalizeText(inst.nome) === overNorm);
+                const targetFinal = afterTargetInfo ? afterTargetInfo.totalAlunos : afterTarget;
+                const overFinal = afterOverInfo ? afterOverInfo.totalAlunos : afterOver;
+                const sameCourseAfter = sameCourseCount + 1;
+
+                let score = 0;
+                score -= hardImprovement * 1000;
+                score -= improvement * 100;
+                score -= globalImprovement * 50;
+                score += Math.abs(targetFinal - issue.effectiveIdeal) * 8;
+                score += Math.abs(overFinal - issue.effectiveIdeal) * 4;
+                score += Math.max(0, targetFinal - issue.effectiveMax) * 1200;
+                score += Math.max(0, issue.effectiveMin - targetFinal) * 700;
+                score += Math.max(0, afterInfo.gap - BALANCE_LIMITS.maxGap) * Math.max(0, afterInfo.gap - BALANCE_LIMITS.maxGap) * 60;
+                score += afterInfo.gap * 40;
+                score += sameCourseAfter * 120;
+
+                if (sameCourseAfter > BALANCE_LIMITS.maxSameCourse) score += (sameCourseAfter - BALANCE_LIMITS.maxSameCourse) * 3000;
+                if (targetFinal >= issue.effectiveMin && targetFinal <= issue.effectiveMax) score -= 1000;
+                if (overFinal <= issue.effectiveMax) score -= 600;
+
+                const move = {
+                    ...item,
+                    from: issue.max.nome,
+                    to: target.nome,
+                    dateStr: issue.dateStr,
+                    afterOver: overFinal,
+                    afterTarget: targetFinal,
+                    improvement,
+                    hardImprovement,
+                    globalImprovement,
+                    assignmentKey,
+                    score
+                };
+
+                if (!bestMove || move.score < bestMove.score) {
+                    bestMove = move;
+                }
+            });
+    });
+
+    return bestMove;
+};
+
+const findDirectBalanceRepairMove = (rows, issue, moveHistory, lockedMoveKeys = new Set(), futureDatesOverride = null) => {
+    const overNorm = normalizeText(issue.max.nome);
+    const beforeHard = getHardBalanceScore(issue.snapshot, issue);
+    const futureDates = futureDatesOverride || getFutureBalanceDates(rows);
+    const beforeGlobalPenalty = getTotalBalancePenalty(rows, futureDates);
+    let bestMove = null;
+
+    const candidates = rows
+        .map((row, index) => {
+            const active = getActiveRoleOnBalanceDate(row, issue.dateStr);
+            if (!active || normalizeText(active.inst) !== overNorm) return null;
+
+            const key = `${safeString(row.id) || index}|${active.role}`;
+            if (lockedMoveKeys.has(key)) return null;
+
+            return {
+                row,
+                index,
+                role: active.role,
+                alunos: parseInt(row.alunos) || 0,
+                key
+            };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.alunos - a.alunos);
+
+    const targets = issue.snapshot
+        .filter(inst => normalizeText(inst.nome) !== overNorm)
+        .sort((a, b) => a.totalAlunos - b.totalAlunos);
+
+    candidates.forEach(item => {
+        targets.forEach(target => {
+            if (!canInstructorReceiveBalanceClass(item.row, item.role, target.nome)) return;
+
+            const assignmentKey = `${item.key}->${normalizeText(target.nome)}`;
+            if (moveHistory.has(assignmentKey)) return;
+
+            const simulatedRows = rows.map((row, idx) => {
+                if (idx !== item.index) return row;
+                return { ...row, [item.role]: target.nome };
+            });
+
+            if (getDuplicateInstructorInClass(simulatedRows[item.index])) return;
+
+            const afterSnapshot = getBalanceSnapshot(simulatedRows, issue.dateStr);
+            const afterInfo = getBalancePenaltyForSnapshot(afterSnapshot);
+            const afterHard = getHardBalanceScore(afterSnapshot, afterInfo);
+            const hardImprovement = beforeHard.hardScore - afterHard.hardScore;
+            const afterGlobalPenalty = getTotalBalancePenalty(simulatedRows, futureDates);
+            const globalImprovement = beforeGlobalPenalty - afterGlobalPenalty;
+
+            if (globalImprovement <= 0) return;
+
+            const afterTargetInfo = afterSnapshot.find(inst => normalizeText(inst.nome) === normalizeText(target.nome));
+            const afterOverInfo = afterSnapshot.find(inst => normalizeText(inst.nome) === overNorm);
+            const targetFinal = afterTargetInfo ? afterTargetInfo.totalAlunos : target.totalAlunos + item.alunos;
+            const overFinal = afterOverInfo ? afterOverInfo.totalAlunos : issue.max.totalAlunos - item.alunos;
+            const courseKey = `${getSafeModalidade(item.row)}|${safeString(item.row.curso)}`;
+            const sameCourseAfter = (target.cursos[courseKey] || 0) + 1;
+
+            let score = 0;
+            score += afterInfo.gap * 10000;
+            score += Math.max(0, issue.effectiveMin - targetFinal) * 3000;
+            score += Math.max(0, issue.effectiveMin - overFinal) * 2000;
+            score += Math.max(0, targetFinal - issue.effectiveMax) * 5000;
+            score += Math.max(0, overFinal - issue.effectiveMax) * 1000;
+            score -= hardImprovement;
+            score -= globalImprovement * 50;
+            score += sameCourseAfter * 150;
+
+            if (sameCourseAfter > BALANCE_LIMITS.maxSameCourse) {
+                score += (sameCourseAfter - BALANCE_LIMITS.maxSameCourse) * 3000;
+            }
+
+            const move = {
+                ...item,
+                from: issue.max.nome,
+                to: target.nome,
+                dateStr: issue.dateStr,
+                afterOver: overFinal,
+                afterTarget: targetFinal,
+                improvement: issue.penalty - afterInfo.penalty,
+                hardImprovement,
+                globalImprovement,
+                assignmentKey,
+                score
+            };
+
+            if (!bestMove || move.score < bestMove.score) {
+                bestMove = move;
+            }
+        });
+    });
+
+    return bestMove;
+};
+
+const findBestSystemBalanceMove = (rows, issues, moveHistory, lockedMoveKeys = new Set(), futureDatesOverride = null) => {
+    const batchSize = 12;
+
+    for (let start = 0; start < issues.length; start += batchSize) {
+        let bestMove = null;
+        const batch = issues.slice(start, start + batchSize);
+
+        batch.forEach(issue => {
+            const move = findDirectBalanceRepairMove(rows, issue, moveHistory, lockedMoveKeys, futureDatesOverride)
+                || findBestBalanceMove(rows, issue, moveHistory, lockedMoveKeys, futureDatesOverride);
+            if (!move) return;
+
+            if (
+                !bestMove ||
+                move.hardImprovement > bestMove.hardImprovement ||
+                (move.hardImprovement === bestMove.hardImprovement && move.globalImprovement > bestMove.globalImprovement) ||
+                (move.hardImprovement === bestMove.hardImprovement && move.globalImprovement === bestMove.globalImprovement && move.score < bestMove.score)
+            ) {
+                bestMove = move;
+            }
+        });
+
+        if (bestMove) {
+            return bestMove;
+        }
+    }
+
+    return null;
+};
+
+const executeBalanceOnRows = (sourceRows, lockedMoveKeys = new Set()) => {
+    let newRows = (sourceRows || []).map(row => ({ ...row }));
+    const futureDates = getFutureBalanceDates(newRows);
+    const initialIssues = getBalanceIssues(newRows, futureDates);
+    const moveHistory = new Set();
+    const moves = [];
+
+    newRows.forEach((row, index) => {
+        getBalanceRolesForClass(row).forEach(role => {
+            const currentName = normalizeText(row[role]);
+            if (currentName) {
+                moveHistory.add(`${safeString(row.id) || index}|${role}->${currentName}`);
+            }
+        });
+    });
+
+    for (let i = 0; i < BALANCE_LIMITS.maxMoves; i++) {
+        const issues = getBalanceIssues(newRows, futureDates);
+        if (issues.length === 0) break;
+
+        const move = findBestSystemBalanceMove(newRows, issues, moveHistory, lockedMoveKeys, futureDates);
+        if (!move) break;
+
+        const current = newRows[move.index];
+
+        newRows[move.index] = {
+            ...current,
+            [move.role]: move.to,
+            autoAssignedLogs: {
+                ...(current.autoAssignedLogs || {}),
+                [move.role]: {
+                    nome: move.to,
+                    type: 'rebalance-future',
+                    reason: `Rebalanceamento futuro em ${formatDatePTBR(move.dateStr)}: saiu de ${move.from} para reduzir sobrecarga.`
+                }
+            }
+        };
+
+        moveHistory.add(move.assignmentKey);
+        moves.push(move);
+    }
+
+    return {
+        rows: newRows,
+        moves,
+        initialIssues,
+        remainingIssues: getBalanceIssues(newRows, futureDates)
+    };
+};
+
+const getChronologicalBalanceDates = (rows) => {
+    const dates = new Set();
+    const start = new Date((viewDate || new Date().toISOString().split('T')[0]) + 'T00:00:00');
+    const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+    let latest = new Date(cursor);
+    dates.add(getBalanceDateStr(start));
+
+    rows.forEach(row => {
+        ['inicio', 'dataTransferencia', 'dataTransferencia2', 'termino'].forEach(field => {
+            const value = safeString(row[field]);
+            if (value.length !== 10) return;
+            const dateValue = new Date(value + 'T00:00:00');
+            if (dateValue > latest) latest = dateValue;
+        });
+    });
+
+    const maxLatest = new Date(cursor.getFullYear(), cursor.getMonth() + 18, 1);
+    if (latest > maxLatest) latest = maxLatest;
+
+    while (cursor <= latest) {
+        // Checkpoints semanais evitam que o sistema fique equilibrado no dia 01,
+        // mas desbalanceado depois de entradas/passagens no meio do mês.
+        [1, 8, 9, 15, 22].forEach(day => {
+            const checkpoint = new Date(cursor.getFullYear(), cursor.getMonth(), day);
+            if (checkpoint >= start && checkpoint <= latest) dates.add(getBalanceDateStr(checkpoint));
+        });
+        cursor.setMonth(cursor.getMonth() + 1);
+    }
+
+    rows.forEach(row => {
+        ['inicio', 'dataTransferencia', 'dataTransferencia2', 'termino'].forEach(field => {
+            const value = safeString(row[field]);
+            if (value.length !== 10) return;
+
+            const dateValue = new Date(value + 'T00:00:00');
+            if (dateValue < start || dateValue > latest) return;
+
+            dates.add(getBalanceDateStr(dateValue));
+
+            if (field === 'termino') {
+                const afterEnd = new Date(dateValue);
+                afterEnd.setDate(afterEnd.getDate() + 1);
+                if (afterEnd >= start && afterEnd <= latest) dates.add(getBalanceDateStr(afterEnd));
+            }
+        });
+    });
+
+    return [...dates].sort();
+};
+
+const getChronologicalSnapshot = (rows, dateStr, instructorPoolOverride = null) => {
+    return getBalanceSnapshot(rows, dateStr, instructorPoolOverride)
+        .sort((a, b) => b.totalAlunos - a.totalAlunos);
+};
+
+const getChronologicalDateScore = (rows, dateStr, instructorPoolOverride = null) => {
+    const snapshot = getChronologicalSnapshot(rows, dateStr, instructorPoolOverride);
+
+    if (snapshot.length < 2) {
+        return { score: 0, gap: 0, top: null, bottom: null, snapshot };
+    }
+
+    const top = snapshot[0];
+    const bottom = snapshot[snapshot.length - 1];
+    const gap = top.totalAlunos - bottom.totalAlunos;
+    const totalAlunos = snapshot.reduce((acc, inst) => acc + inst.totalAlunos, 0);
+    const avg = totalAlunos / snapshot.length;
+    const minPossible = totalAlunos >= (BALANCE_LIMITS.min * snapshot.length);
+
+    let score = 0;
+    score += Math.max(0, gap - BALANCE_LIMITS.maxGap) * Math.max(0, gap - BALANCE_LIMITS.maxGap) * 10000;
+    score += Math.max(0, top.totalAlunos - BALANCE_LIMITS.max) * Math.max(0, top.totalAlunos - BALANCE_LIMITS.max) * 3000;
+    score += snapshot.reduce((acc, inst) => acc + (Math.abs(inst.totalAlunos - avg) * 12), 0);
+
+    if (minPossible) {
+        score += snapshot.reduce((acc, inst) => {
+            const below = Math.max(0, BALANCE_LIMITS.min - inst.totalAlunos);
+            return acc + (below * below * 1000);
+        }, 0);
+    }
+
+    return { score, gap, top, bottom, snapshot, avg, minPossible };
+};
+
+const getOperationalBalanceDateStr = () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return getBalanceDateStr(today);
+};
+
+const isRoleProtectedByCurrentInstructor = (row, role) => {
+    const active = getActiveRoleOnBalanceDate(row, getOperationalBalanceDateStr());
+    return active && active.role === role && safeString(row[role]);
+};
+
+const canMoveRoleForBalance = (row, role, key, lockedMoveKeys = new Set()) => {
+    if (!safeString(row[role])) return false;
+    if (lockedMoveKeys.has(key)) return false;
+
+    const log = row.autoAssignedLogs && typeof row.autoAssignedLogs === 'object'
+        ? row.autoAssignedLogs[role]
+        : null;
+
+    if (log && typeof log === 'object' && log.type === 'preserved-current') return false;
+
+    // Mantém o instrutor que está ativo hoje. O equilíbrio pode mexer nas
+    // passagens futuras e nas turmas agendadas, inclusive se vieram manuais.
+    return !isRoleProtectedByCurrentInstructor(row, role);
+};
+
+const getGlobalChronologicalBalanceScore = (rows, balanceDates, pool) => {
+    const dateInfos = balanceDates.map(dateStr => ({
+        dateStr,
+        ...getChronologicalDateScore(rows, dateStr, pool)
+    }));
+
+    const issues = dateInfos
+        .filter(info => info.top && info.gap > BALANCE_LIMITS.maxGap)
+        .sort((a, b) => {
+            if (b.gap !== a.gap) return b.gap - a.gap;
+            return b.score - a.score;
+        });
+
+    const worstGap = issues.length > 0 ? issues[0].gap : 0;
+    const score = dateInfos.reduce((acc, info) => {
+        if (!info.top) return acc;
+        const gapOverflow = Math.max(0, info.gap - BALANCE_LIMITS.maxGap);
+        const topOverflow = Math.max(0, info.top.totalAlunos - BALANCE_LIMITS.max);
+        const lowPenalty = info.minPossible
+            ? info.snapshot.reduce((sum, inst) => {
+                const below = Math.max(0, BALANCE_LIMITS.min - inst.totalAlunos);
+                return sum + (below * below * 500);
+            }, 0)
+            : 0;
+
+        return acc
+            + info.score
+            + (gapOverflow * gapOverflow * 25000)
+            + (topOverflow * topOverflow * 5000)
+            + lowPenalty;
+    }, 0);
+
+    return { score, issues, worstGap, dateInfos };
+};
+
+const getFocusedMoveDates = (row, role, allDates, dateStr, priorityDateStr = '') => {
+    const dates = getBalanceImpactDatesForMove(row, role, allDates, dateStr);
+    if (priorityDateStr && !dates.includes(priorityDateStr)) dates.push(priorityDateStr);
+    return [...new Set(dates)].sort();
+};
+
+const getFocusedChronologicalScore = (rows, dates, pool) => {
+    return dates.reduce((acc, dateStr) => {
+        const info = getChronologicalDateScore(rows, dateStr, pool);
+        const gapOverflow = Math.max(0, info.gap - BALANCE_LIMITS.maxGap);
+        const topOverflow = info.top ? Math.max(0, info.top.totalAlunos - BALANCE_LIMITS.max) : 0;
+        const lowPenalty = info.minPossible
+            ? info.snapshot.reduce((sum, inst) => sum + Math.max(0, BALANCE_LIMITS.min - inst.totalAlunos), 0)
+            : 0;
+
+        return acc + info.score + (gapOverflow * gapOverflow * 8000) + (topOverflow * topOverflow * 1200) + (lowPenalty * lowPenalty * 400);
+    }, 0);
+};
+
+const findFocusedChronologicalRepairMove = (rows, issues, balanceDates, pool, lockedMoveKeys, moveHistory, priorityDateStr = '', maxIssues = 24, protectPriorityDate = true, maxDonors = 4, protectedDateList = [], allowTemporaryImpact = false) => {
+    let bestMove = null;
+
+    issues.slice(0, maxIssues).forEach(issue => {
+        if (!issue.top || issue.gap <= BALANCE_LIMITS.maxGap) return;
+
+        const bottomLoad = issue.bottom ? issue.bottom.totalAlunos : issue.snapshot[issue.snapshot.length - 1].totalAlunos;
+        const donors = [...issue.snapshot]
+            .filter(inst => inst.totalAlunos > bottomLoad + 5)
+            .sort((a, b) => b.totalAlunos - a.totalAlunos)
+            .slice(0, maxDonors);
+
+        donors.forEach(donor => {
+            const donorNorm = normalizeText(donor.nome);
+            const lowTargets = [...issue.snapshot]
+                .filter(inst => normalizeText(inst.nome) !== donorNorm && inst.totalAlunos < donor.totalAlunos)
+                .sort((a, b) => a.totalAlunos - b.totalAlunos)
+                .slice(0, 8);
+
+            const candidates = rows
+                .map((row, index) => {
+                    const active = getActiveRoleOnBalanceDate(row, issue.dateStr);
+                    if (!active || normalizeText(active.inst) !== donorNorm) return null;
+
+                    const key = `${safeString(row.id) || index}|${active.role}`;
+                    if (!canMoveRoleForBalance(row, active.role, key, lockedMoveKeys)) return null;
+
+                    return {
+                        row,
+                        index,
+                        role: active.role,
+                        alunos: parseInt(row.alunos) || 0,
+                        key
+                    };
+                })
+                .filter(Boolean)
+                .sort((a, b) => {
+                    const idealMove = Math.max(18, issue.gap / 2);
+                    return Math.abs(a.alunos - idealMove) - Math.abs(b.alunos - idealMove);
+                })
+                .slice(0, 12);
+
+            candidates.forEach(item => {
+                lowTargets.forEach(target => {
+                    if (!canInstructorReceiveBalanceClass(item.row, item.role, target.nome)) return;
+
+                    const historyKey = `${item.key}->${normalizeText(target.nome)}@${issue.dateStr}`;
+                    if (moveHistory.has(historyKey)) return;
+
+                    const simulatedRows = rows.map((row, idx) => {
+                        if (idx !== item.index) return row;
+                        return {
+                            ...row,
+                            [item.role]: target.nome,
+                            autoAssignedLogs: {
+                                ...(row.autoAssignedLogs || {}),
+                                [item.role]: {
+                                    nome: target.nome,
+                                    type: 'rebalance-future',
+                                    reason: `Reparo de equilíbrio em ${formatDatePTBR(issue.dateStr)}: saiu de ${donor.nome} para manter a diferença máxima de ${BALANCE_LIMITS.maxGap} alunos.`
+                                }
+                            }
+                        };
+                    });
+
+                    if (getDuplicateInstructorInClass(simulatedRows[item.index])) return;
+
+                    const afterIssue = getChronologicalDateScore(simulatedRows, issue.dateStr, pool);
+                    if (!afterIssue.top) return;
+                    if (afterIssue.gap >= issue.gap && afterIssue.score >= issue.score) return;
+
+                    const affectedDates = getFocusedMoveDates(simulatedRows[item.index], item.role, balanceDates, issue.dateStr, priorityDateStr);
+                    const unsafeImpact = affectedDates.some(dateStr => {
+                        const before = getChronologicalDateScore(rows, dateStr, pool);
+                        const after = getChronologicalDateScore(simulatedRows, dateStr, pool);
+                        const allowedGap = Math.max(BALANCE_LIMITS.maxGap + 35, before.gap + 12);
+                        const topTooHigh = after.top && after.top.totalAlunos > BALANCE_LIMITS.hardMax + 20;
+                        return after.gap > allowedGap || topTooHigh;
+                    });
+
+                    if (unsafeImpact && !allowTemporaryImpact) return;
+
+                    if (priorityDateStr && protectPriorityDate) {
+                        const priorityBefore = getChronologicalDateScore(rows, priorityDateStr, pool);
+                        const priorityAfter = getChronologicalDateScore(simulatedRows, priorityDateStr, pool);
+                        if (priorityAfter.gap > priorityBefore.gap) return;
+                        if (priorityBefore.gap <= BALANCE_LIMITS.maxGap && priorityAfter.gap > BALANCE_LIMITS.maxGap) return;
+                    }
+
+                    const protectedImpactBad = (protectedDateList || [])
+                        .filter(protectedDate => protectedDate !== issue.dateStr && affectedDates.includes(protectedDate))
+                        .some(protectedDate => {
+                            const beforeProtected = getChronologicalDateScore(rows, protectedDate, pool);
+                            if (!beforeProtected.top || beforeProtected.gap > BALANCE_LIMITS.maxGap) return false;
+                            const afterProtected = getChronologicalDateScore(simulatedRows, protectedDate, pool);
+                            return afterProtected.gap > beforeProtected.gap || afterProtected.gap > BALANCE_LIMITS.maxGap;
+                        });
+
+                    if (protectedImpactBad) return;
+
+                    const beforeFocused = getFocusedChronologicalScore(rows, affectedDates, pool);
+                    const afterFocused = getFocusedChronologicalScore(simulatedRows, affectedDates, pool);
+                    const courseKey = `${getSafeModalidade(item.row)}|${safeString(item.row.curso)}`;
+                    const targetAfter = afterIssue.snapshot.find(inst => normalizeText(inst.nome) === normalizeText(target.nome));
+                    const sameCourseAfter = targetAfter && targetAfter.cursos ? (targetAfter.cursos[courseKey] || 0) : 0;
+                    const priorityBonus = priorityDateStr && issue.dateStr === priorityDateStr ? 900000 : 0;
+
+                    let score = 0;
+                    score += afterIssue.gap * 120000;
+                    score += Math.max(0, afterIssue.gap - BALANCE_LIMITS.maxGap) * Math.max(0, afterIssue.gap - BALANCE_LIMITS.maxGap) * 8000;
+                    score += afterFocused - beforeFocused;
+                    score += sameCourseAfter * 800;
+                    if (sameCourseAfter > BALANCE_LIMITS.maxSameCourse) score += (sameCourseAfter - BALANCE_LIMITS.maxSameCourse) * 9000;
+                    score -= priorityBonus;
+
+                    const move = {
+                        ...item,
+                        from: donor.nome,
+                        to: target.nome,
+                        dateStr: issue.dateStr,
+                        afterGap: afterIssue.gap,
+                        historyKey,
+                        score
+                    };
+
+                    if (
+                        !bestMove ||
+                        move.score < bestMove.score ||
+                        (move.score === bestMove.score && move.afterGap < bestMove.afterGap)
+                    ) {
+                        bestMove = move;
+                    }
+                });
+            });
+        });
+    });
+
+    return bestMove;
+};
+
+const getCriticalChronologicalPriorityDates = (rows, pool, maxDates = 8) => {
+    const dates = getChronologicalBalanceDates(rows);
+    const issueInfos = dates
+        .map(dateStr => ({ dateStr, ...getChronologicalDateScore(rows, dateStr, pool) }))
+        .filter(info => info.top && info.gap > BALANCE_LIMITS.maxGap);
+
+    const dayNinePriorities = issueInfos
+        .filter(info => info.dateStr.endsWith('-09'))
+        .sort((a, b) => a.dateStr.localeCompare(b.dateStr))
+        .slice(0, Math.max(4, Math.floor(maxDates / 2)))
+        .map(info => info.dateStr);
+
+    const bestByMonth = {};
+    issueInfos.forEach(info => {
+        const monthKey = info.dateStr.slice(0, 7);
+        if (
+            !bestByMonth[monthKey] ||
+            info.gap > bestByMonth[monthKey].gap ||
+            (info.gap === bestByMonth[monthKey].gap && info.score > bestByMonth[monthKey].score)
+        ) {
+            bestByMonth[monthKey] = info;
+        }
+    });
+
+    const monthPriorities = Object.values(bestByMonth)
+        .sort((a, b) => {
+            // Meses próximos entram primeiro; dentro do mês, pega o pior dia.
+            if (a.dateStr.slice(0, 7) !== b.dateStr.slice(0, 7)) {
+                return a.dateStr.localeCompare(b.dateStr);
+            }
+            if (b.gap !== a.gap) return b.gap - a.gap;
+            return b.score - a.score;
+        })
+        .map(info => info.dateStr);
+
+    return [...new Set([...dayNinePriorities, ...monthPriorities])].slice(0, maxDates);
+};
+
+const getMonthlyBalanceSweepPlan = (rows, pool, monthsAhead = 5) => {
+    const allDates = getChronologicalBalanceDates(rows);
+    const start = new Date((viewDate || new Date().toISOString().split('T')[0]) + 'T00:00:00');
+    const firstMonth = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+    const horizon = new Date(start.getFullYear(), start.getMonth() + monthsAhead, 31);
+    const byMonth = {};
+
+    allDates.forEach(dateStr => {
+        const dateObj = new Date(dateStr + 'T00:00:00');
+        if (dateObj < firstMonth || dateObj > horizon) return;
+
+        const info = getChronologicalDateScore(rows, dateStr, pool);
+        if (!info.top || info.snapshot.length < 2) return;
+
+        const monthKey = dateStr.slice(0, 7);
+        if (!byMonth[monthKey]) byMonth[monthKey] = [];
+        byMonth[monthKey].push({ dateStr, ...info });
+    });
+
+    const priorityDates = [];
+    const impossibleMonths = [];
+
+    Object.keys(byMonth).sort().forEach(monthKey => {
+        const monthInfos = byMonth[monthKey].sort((a, b) => {
+            if (b.gap !== a.gap) return b.gap - a.gap;
+            return b.score - a.score;
+        });
+
+        const worst = monthInfos[0];
+        if (!worst) return;
+
+        if (!worst.minPossible) {
+            impossibleMonths.push({
+                monthKey,
+                avg: Math.round(worst.avg || 0),
+                total: worst.snapshot.reduce((acc, inst) => acc + inst.totalAlunos, 0),
+                instructors: worst.snapshot.length,
+                gap: worst.gap,
+                top: worst.top,
+                bottom: worst.bottom
+            });
+            return;
+        }
+
+        if (worst.gap <= BALANCE_LIMITS.maxGap) return;
+
+        const dayNine = monthInfos.find(info => info.dateStr.endsWith('-09') && info.gap > BALANCE_LIMITS.maxGap);
+        [dayNine, worst].filter(Boolean).forEach(info => {
+            if (!priorityDates.includes(info.dateStr)) priorityDates.push(info.dateStr);
+        });
+    });
+
+    return {
+        priorityDates: priorityDates.slice(0, 10),
+        impossibleMonths
+    };
+};
+
+const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(), instructorPoolOverride = null, options = {}) => {
+    let newRows = (sourceRows || []).map(row => ({
+        ...row,
+        autoAssignedLogs: row.autoAssignedLogs && typeof row.autoAssignedLogs === 'object'
+            ? { ...row.autoAssignedLogs }
+            : row.autoAssignedLogs
+    }));
+    const balanceDates = getChronologicalBalanceDates(newRows);
+    const pool = instructorPoolOverride || uniqueInstrutores;
+    const priorityDateStr = (options.priorityDateStr && options.priorityDateStr.length === 10)
+        ? options.priorityDateStr
+        : '';
+    const priorityDateList = [
+        ...(priorityDateStr ? [priorityDateStr] : []),
+        ...(Array.isArray(options.priorityDateList) ? options.priorityDateList : [])
+    ]
+        .filter(dateStr => safeString(dateStr).length === 10)
+        .filter((dateStr, idx, arr) => arr.indexOf(dateStr) === idx)
+        .slice(0, options.maxPriorityDates || 8);
+    const lockedPreviousGaps = {};
+    const moves = [];
+
+    const chronologicalIterations = options.skipChronologicalPass ? 0 : (options.maxChronologicalIterations || 40);
+
+    balanceDates.forEach((dateStr, dateIndex) => {
+        for (let iter = 0; iter < chronologicalIterations; iter++) {
+            const current = getChronologicalDateScore(newRows, dateStr, pool);
+            if (!current.top || current.gap <= BALANCE_LIMITS.maxGap) break;
+
+            const lowTargets = [...current.snapshot]
+                .sort((a, b) => a.totalAlunos - b.totalAlunos)
+                .slice(0, 6);
+
+            const candidates = newRows
+                .map((row, index) => {
+                    const active = getActiveRoleOnBalanceDate(row, dateStr);
+                    if (!active || normalizeText(active.inst) !== normalizeText(current.top.nome)) return null;
+
+                    const key = `${safeString(row.id) || index}|${active.role}`;
+                    if (!canMoveRoleForBalance(row, active.role, key, lockedMoveKeys)) return null;
+
+                    return {
+                        row,
+                        index,
+                        role: active.role,
+                        alunos: parseInt(row.alunos) || 0,
+                        key
+                    };
+                })
+                .filter(Boolean)
+                .sort((a, b) => {
+                    const idealMove = Math.max(15, current.gap / 2);
+                    return Math.abs(a.alunos - idealMove) - Math.abs(b.alunos - idealMove);
+                })
+                .slice(0, 20);
+
+            let bestMove = null;
+
+            candidates.forEach(item => {
+                lowTargets.forEach(target => {
+                    if (normalizeText(target.nome) === normalizeText(current.top.nome)) return;
+                    if (!canInstructorReceiveBalanceClass(item.row, item.role, target.nome)) return;
+
+                    const simulatedRows = newRows.map((row, idx) => {
+                        if (idx !== item.index) return row;
+                        return {
+                            ...row,
+                            [item.role]: target.nome,
+                            autoAssignedLogs: {
+                                ...(row.autoAssignedLogs || {}),
+                                [item.role]: {
+                                    nome: target.nome,
+                                    type: 'rebalance-future',
+                                    reason: `Ajuste cronológico em ${formatDatePTBR(dateStr)}: saiu de ${current.top.nome} para reduzir a diferença mensal.`
+                                }
+                            }
+                        };
+                    });
+
+                    if (getDuplicateInstructorInClass(simulatedRows[item.index])) return;
+
+                    const after = getChronologicalDateScore(simulatedRows, dateStr, pool);
+                    if (after.score >= current.score && after.gap >= current.gap) return;
+
+                    const previousDatesOk = balanceDates.slice(0, dateIndex).every(previousDate => {
+                        if (lockedPreviousGaps[previousDate] === undefined) return true;
+                        const allowedPreviousGap = Math.max(BALANCE_LIMITS.maxGap, lockedPreviousGaps[previousDate] + 5);
+                        return getChronologicalDateScore(simulatedRows, previousDate, pool).gap <= allowedPreviousGap;
+                    });
+
+                    if (!previousDatesOk) return;
+
+                    const improvement = current.score - after.score;
+                    const move = {
+                        ...item,
+                        from: current.top.nome,
+                        to: target.nome,
+                        dateStr,
+                        afterGap: after.gap,
+                        improvement
+                    };
+
+                    if (
+                        !bestMove ||
+                        move.afterGap < bestMove.afterGap ||
+                        (move.afterGap === bestMove.afterGap && move.improvement > bestMove.improvement)
+                    ) {
+                        bestMove = move;
+                    }
+                });
+            });
+
+            if (!bestMove) break;
+
+            const currentRow = newRows[bestMove.index];
+            newRows[bestMove.index] = {
+                ...currentRow,
+                [bestMove.role]: bestMove.to,
+                autoAssignedLogs: {
+                    ...(currentRow.autoAssignedLogs || {}),
+                    [bestMove.role]: {
+                        nome: bestMove.to,
+                        type: 'rebalance-future',
+                        reason: `Ajuste cronológico em ${formatDatePTBR(bestMove.dateStr)}: saiu de ${bestMove.from} para reduzir a diferença mensal.`
+                    }
+                }
+            };
+
+            moves.push(bestMove);
+        }
+
+        lockedPreviousGaps[dateStr] = getChronologicalDateScore(newRows, dateStr, pool).gap;
+    });
+
+    const repairMoveHistory = new Set();
+    const applyRepairMove = (bestMove) => {
+        const currentRow = newRows[bestMove.index];
+        newRows[bestMove.index] = {
+            ...currentRow,
+            [bestMove.role]: bestMove.to,
+            autoAssignedLogs: {
+                ...(currentRow.autoAssignedLogs || {}),
+                [bestMove.role]: {
+                    nome: bestMove.to,
+                    type: 'rebalance-future',
+                    reason: `Reparo de equilíbrio em ${formatDatePTBR(bestMove.dateStr)}: saiu de ${bestMove.from} para manter diferença máxima de ${BALANCE_LIMITS.maxGap} alunos.`
+                }
+            }
+        };
+
+        repairMoveHistory.add(bestMove.historyKey);
+        moves.push(bestMove);
+    };
+
+    const repairPriorityDate = (dateStr) => {
+        if (!dateStr) return;
+
+        const priorityMoveHistory = new Set();
+
+        for (let iter = 0; iter < (options.priorityRepairMoves || 28); iter++) {
+            const priorityInfo = { dateStr, ...getChronologicalDateScore(newRows, dateStr, pool) };
+            if (!priorityInfo.top || priorityInfo.gap <= BALANCE_LIMITS.maxGap) break;
+
+            const priorityMove = findFocusedChronologicalRepairMove(
+                newRows,
+                [priorityInfo],
+                balanceDates,
+                pool,
+                lockedMoveKeys,
+                priorityMoveHistory,
+                dateStr,
+                1,
+                true,
+                options.priorityMaxDonors || 8,
+                [],
+                true
+            );
+
+            if (!priorityMove) break;
+            priorityMoveHistory.add(priorityMove.historyKey);
+            applyRepairMove(priorityMove);
+        }
+    };
+
+    const repairPriorityDates = (cycles = 1) => {
+        for (let cycle = 0; cycle < cycles; cycle++) {
+            const beforeMoveCount = moves.length;
+            const orderedPriorityDates = priorityDateList
+                .map(dateStr => ({ dateStr, ...getChronologicalDateScore(newRows, dateStr, pool) }))
+                .filter(info => info.top && info.gap > BALANCE_LIMITS.maxGap)
+                .sort((a, b) => {
+                    if (b.gap !== a.gap) return b.gap - a.gap;
+                    return b.score - a.score;
+                })
+                .map(info => info.dateStr);
+
+            orderedPriorityDates.forEach(repairPriorityDate);
+            if (moves.length === beforeMoveCount) break;
+        }
+    };
+
+    repairPriorityDates(1);
+
+    for (let iter = 0; iter < (options.maxRepairMoves || 35); iter++) {
+        const remaining = balanceDates
+            .map(dateStr => ({ dateStr, ...getChronologicalDateScore(newRows, dateStr, pool) }))
+            .filter(info => info.top && info.gap > BALANCE_LIMITS.maxGap)
+            .sort((a, b) => {
+                const aPriority = priorityDateList.includes(a.dateStr) ? 1 : 0;
+                const bPriority = priorityDateList.includes(b.dateStr) ? 1 : 0;
+                if (aPriority !== bPriority) return bPriority - aPriority;
+                if (b.gap !== a.gap) return b.gap - a.gap;
+                return b.score - a.score;
+            });
+
+        if (remaining.length === 0) break;
+
+        const bestMove = findFocusedChronologicalRepairMove(
+            newRows,
+            remaining,
+            balanceDates,
+            pool,
+            lockedMoveKeys,
+            repairMoveHistory,
+            priorityDateStr,
+            options.maxRepairIssues || 8,
+            options.protectPriorityDate !== false,
+            options.maxDonors || 4,
+            options.protectPriorityDate === false ? [] : priorityDateList
+        );
+        if (!bestMove) break;
+        applyRepairMove(bestMove);
+    }
+
+    repairPriorityDates(options.priorityRepairCycles || 3);
+
+    const remainingIssues = balanceDates
+        .map(dateStr => ({ dateStr, ...getChronologicalDateScore(newRows, dateStr, pool) }))
+        .filter(info => info.top && info.gap > BALANCE_LIMITS.maxGap);
+
+    return { rows: newRows, moves, remainingIssues };
+};
+
+const rebalanceWorkload = () => {
+    if (!data || data.length === 0) {
+        showNotify("Não há turmas para equilibrar.", "error");
+        return;
+    }
+
+    const initialIssues = getBalanceIssues(data);
+
+    if (initialIssues.length === 0) {
+        showNotify("Nenhuma discrepância relevante encontrada nos meses futuros.", "success");
+        return;
+    }
+
+    const top = initialIssues[0];
+    const lastRun = localStorage.getItem(LAST_REBALANCE_KEY);
+    const lastRunText = lastRun ? new Date(lastRun).toLocaleString('pt-BR') : '';
+    const ok = window.confirm(
+        (lastRun ? `Atenção: já existe uma distribuição automática feita em ${lastRunText}.\nDeseja realmente recalcular uma nova distribuição geral?\n\n` : '') +
+        `Foram encontradas ${initialIssues.length} discrepância(s) futuras.\n\n` +
+        `Maior alerta: ${top.max.nome} com ${top.max.totalAlunos} alunos em ${formatDatePTBR(top.dateStr)}.\n` +
+        `Menor carga: ${top.min.nome} com ${top.min.totalAlunos} alunos.\n\n` +
+        `Meta do período: mínimo ${BALANCE_LIMITS.min} alunos quando possível e diferença máxima de ${BALANCE_LIMITS.maxGap} alunos entre maior e menor carga.\n\n` +
+        `Deseja aplicar o rebalanceamento inteligente no sistema todo agora?`
+    );
+
+    if (!ok) return;
+
+    const balanceResult = executeChronologicalAutoBalance(data, new Set(), null, {
+        priorityDateStr: viewDate,
+        protectPriorityDate: false,
+        maxRepairIssues: 10,
+        maxRepairMoves: 25
+    });
+    const newRows = balanceResult.rows;
+    const moves = balanceResult.moves;
+
+    if (moves.length === 0) {
+        showNotify("O sistema encontrou discrepância, mas não achou troca segura respeitando técnica, bloqueios e futuros instrutores.", "error");
+        return;
+    }
+
+    const remainingIssues = balanceResult.remainingIssues;
+
+    const logEntry = {
+        id: Date.now(),
+        timestamp: new Date().toISOString(),
+        type: "Rebalanceamento IA",
+        classId: "Sistema",
+        before: `${initialIssues.length} discrepância(s) futuras encontradas.`,
+        after: `${moves.length} ajuste(s) aplicado(s). Restaram ${remainingIssues.length} alerta(s).`
+    };
+
+    persist(newRows, substitutions, [logEntry, ...logs]);
+    localStorage.setItem(LAST_REBALANCE_KEY, new Date().toISOString());
+
+    showNotify(`Rebalanceamento concluído: ${moves.length} ajuste(s) aplicado(s).`, "success");
+};
+
+const getBlockRolesForClass = (turma) => {
+    return getClassInstructorRoles(turma);
+};
+
+const getDatesForBlockedRole = (rows, row, role) => {
+    const dates = getFutureBalanceDates(rows).filter(dateStr => {
+        const active = getActiveRoleOnBalanceDate(row, dateStr);
+        return active && active.role === role;
+    });
+
+    if (dates.length > 0) return dates;
+
+    const fallback = role === 'instrutor1'
+        ? row.inicio
+        : role === 'instrutor2'
+            ? (row.dataTransferencia || row.inicio)
+            : (row.dataTransferencia2 || row.dataTransferencia || row.inicio);
+
+    return safeString(fallback).length === 10 ? [fallback] : [viewDate];
+};
+
+const getProjectedInstructorMetrics = (rows, instructorName, row, dates) => {
+    const instNorm = normalizeText(instructorName);
+    const courseKey = `${getSafeModalidade(row)}|${safeString(row.curso)}`;
+    const loads = dates.map(dateStr => {
+        let totalAlunos = 0;
+        let sameCourse = 0;
+
+        rows.forEach(item => {
+            const active = getActiveRoleOnBalanceDate(item, dateStr);
+            if (!active || normalizeText(active.inst) !== instNorm) return;
+
+            totalAlunos += parseInt(item.alunos) || 0;
+
+            const itemCourseKey = `${getSafeModalidade(item)}|${safeString(item.curso)}`;
+            if (itemCourseKey === courseKey) sameCourse += 1;
+        });
+
+        return { totalAlunos, sameCourse };
+    });
+
+    const maxLoad = Math.max(...loads.map(x => x.totalAlunos), 0);
+    const avgLoad = loads.length > 0 ? Math.round(loads.reduce((acc, x) => acc + x.totalAlunos, 0) / loads.length) : 0;
+    const maxSameCourse = Math.max(...loads.map(x => x.sameCourse), 0);
+
+    return { maxLoad, avgLoad, maxSameCourse };
+};
+
+const chooseReplacementForBlockedRole = (rows, rowIndex, role, blockedList, customPool = null) => {
+    const row = rows[rowIndex];
+    const blockedNorms = blockedList.map(normalizeText);
+    const modalidade = getSafeModalidade(row);
+    const roles = getBlockRolesForClass(row);
+    const pool = customPool || uniqueInstrutores;
+    const alreadyInClass = roles
+        .filter(r => r !== role)
+        .map(r => normalizeText(row[r]))
+        .filter(Boolean);
+
+    const dates = getDatesForBlockedRole(rows, row, role);
+
+    return pool
+        .filter(nome => {
+            const norm = normalizeText(nome);
+            if (!norm) return false;
+            if (blockedNorms.includes(norm)) return false;
+            if (alreadyInClass.includes(norm)) return false;
+            const isTecnicaRole = modalidade === 'Técnica' || role === 'instrutor3';
+            if (isTecnicaRole && !isTecnicaInstructor(nome)) return false;
+            if (role === 'instrutor3' && !isTecnicaRole) return false;
+            return true;
+        })
+        .map(nome => {
+            const simulatedRows = rows.map((item, idx) => {
+                if (idx !== rowIndex) return item;
+                return { ...item, [role]: nome };
+            });
+
+            const metrics = getProjectedInstructorMetrics(simulatedRows, nome, row, dates);
+            const worstDateInfo = dates
+                .map(dateStr => getBalancePenaltyForSnapshot(getBalanceSnapshot(simulatedRows, dateStr)))
+                .sort((a, b) => b.penalty - a.penalty)[0] || { effectiveMin: BALANCE_LIMITS.min, effectiveIdeal: BALANCE_LIMITS.ideal, effectiveMax: BALANCE_LIMITS.max };
+            const effectiveMin = worstDateInfo.effectiveMin;
+            const effectiveIdeal = worstDateInfo.effectiveIdeal;
+            const effectiveMax = worstDateInfo.effectiveMax;
+
+            let score = 0;
+            score += Math.abs(metrics.avgLoad - effectiveIdeal) * 8;
+            score += metrics.maxLoad * 2;
+            score += metrics.maxSameCourse * 160;
+
+            if (metrics.maxSameCourse > BALANCE_LIMITS.maxSameCourse) score += (metrics.maxSameCourse - BALANCE_LIMITS.maxSameCourse) * 3000;
+            if (metrics.maxLoad > effectiveMax) score += (metrics.maxLoad - effectiveMax) * 500;
+            if (metrics.maxLoad > BALANCE_LIMITS.hardMax) score += 100000;
+            if (metrics.maxLoad >= effectiveMin && metrics.maxLoad <= effectiveMax) score -= 1200;
+            if (metrics.maxLoad < effectiveMin) score -= (effectiveMin - metrics.maxLoad) * 12;
+
+            return { nome, score, ...metrics };
+        })
+        .sort((a, b) => a.score - b.score);
+};
+
+const redistributeBlockedInstructorRoles = (sourceRows, blockedList = blockedInstructors, customPool = null) => {
+    const blockedNorms = [...new Set((blockedList || []).map(normalizeText).filter(Boolean))];
+    const activePool = [...new Set((customPool || uniqueInstrutores).map(safeString).filter(Boolean))]
+        .filter(nome => !blockedNorms.includes(normalizeText(nome)));
+
+    let newRows = (sourceRows || []).map(row => ({
+        ...row,
+        autoAssignedLogs: row.autoAssignedLogs && typeof row.autoAssignedLogs === 'object'
+            ? { ...row.autoAssignedLogs }
+            : row.autoAssignedLogs
+    }));
+
+    const changes = [];
+    const unresolved = [];
+
+    newRows.forEach((row, rowIndex) => {
+        getBlockRolesForClass(row).forEach(role => {
+            const oldName = safeString(row[role]);
+            const oldNorm = normalizeText(oldName);
+            if (!oldNorm || !blockedNorms.includes(oldNorm)) return;
+
+            const oldCanonical = getCanonical(oldName);
+            const options = chooseReplacementForBlockedRole(newRows, rowIndex, role, blockedNorms, activePool);
+            const chosen = options[0];
+
+            if (!chosen) {
+                newRows[rowIndex] = {
+                    ...newRows[rowIndex],
+                    [role]: '',
+                    autoAssignedLogs: {
+                        ...(newRows[rowIndex].autoAssignedLogs || {}),
+                        [role]: {
+                            nome: '',
+                            type: 'blocked-unresolved',
+                            reason: `${oldCanonical} foi desligado/bloqueado, mas não houve substituto seguro disponível.`
+                        }
+                    }
+                };
+                unresolved.push(`Turma ${row.id} / ${role}`);
+                return;
+            }
+
+            newRows[rowIndex] = {
+                ...newRows[rowIndex],
+                [role]: chosen.nome,
+                autoAssignedLogs: {
+                    ...(newRows[rowIndex].autoAssignedLogs || {}),
+                    [role]: {
+                        nome: chosen.nome,
+                        type: 'blocked-redistribution',
+                        reason: `${oldCanonical} foi desligado/bloqueado. Redistribuído por equilíbrio mensal: carga máxima prevista ${chosen.maxLoad} alunos.`
+                    }
+                }
+            };
+
+            changes.push({
+                turmaId: row.id,
+                curso: row.curso,
+                modalidade: row.modalidade,
+                role,
+                from: oldCanonical,
+                to: chosen.nome
+            });
+        });
+    });
+
+    const balanceResult = changes.length > 0
+        ? executeChronologicalAutoBalance(newRows, new Set(), activePool)
+        : { rows: newRows, moves: [], remainingIssues: [] };
+
+    return {
+        rows: balanceResult.rows,
+        changes,
+        unresolved,
+        balanceMoves: balanceResult.moves,
+        remainingIssues: balanceResult.remainingIssues
+    };
+};
+
+const handleBlockInstructor = (instructorName) => {
+    const cleanName = getCanonical(instructorName);
+    const blockNorm = normalizeText(cleanName);
+
+    if (!blockNorm) {
+        showNotify("Instrutor inválido para bloqueio.", "error");
+        return;
+    }
+
+    if (blockedInstructors.includes(blockNorm)) {
+        showNotify(`${cleanName} já está bloqueado no sistema.`, "error");
+        return;
+    }
+
+    const affected = data.reduce((acc, row) => {
+        return acc + getBlockRolesForClass(row).filter(role => normalizeText(row[role]) === blockNorm).length;
+    }, 0);
+
+    const ok = window.confirm(
+        `Bloquear ${cleanName}?\n\n` +
+        `O instrutor sairá das listas do sistema e ${affected} posição(ões) de turma serão redistribuídas automaticamente respeitando carga, curso, técnica e futuros instrutores da mesma turma.`
+    );
+
+    if (!ok) return;
+
+    const nextBlocked = [...new Set([...blockedInstructors, blockNorm])];
+    const redistribution = redistributeBlockedInstructorRoles(data, nextBlocked);
+    const newRows = redistribution.rows;
+    const changes = redistribution.changes;
+    const unresolved = redistribution.unresolved;
+
+    const nextWhitelist = tecnicaWhitelist.filter(nome => normalizeText(nome) !== blockNorm);
+    setTecnicaWhitelist(nextWhitelist);
+    localStorage.setItem('senacWhitelist_v1', JSON.stringify(nextWhitelist));
+
+    setBlockedInstructors(nextBlocked);
+    localStorage.setItem(BLOCK_KEY, JSON.stringify(nextBlocked));
+    const nextExtraInstructors = extraInstructors.filter(nome => normalizeText(nome) !== blockNorm);
+    setExtraInstructors(nextExtraInstructors);
+    localStorage.setItem(EXTRA_INSTRUCTORS_KEY, JSON.stringify(nextExtraInstructors));
+
+    const logEntry = {
+        id: Date.now(),
+        timestamp: new Date().toISOString(),
+        type: "Bloqueio de Instrutor",
+        classId: cleanName,
+        before: `${cleanName} ativo na base.`,
+        after: `Bloqueado. ${changes.length} posição(ões) redistribuída(s). ${redistribution.balanceMoves.length} ajuste(s) cronológico(s). ${unresolved.length} sem substituto. Meta: diferença máxima de ${BALANCE_LIMITS.maxGap} alunos por mês quando matematicamente possível.`
+    };
+
+    persist(newRows, substitutions, [logEntry, ...logs], nextBlocked);
+    setSelectedInstructorDetail(null);
+
+    if (unresolved.length > 0) {
+        showNotify(`Instrutor bloqueado, mas ${unresolved.length} posição(ões) ficaram sem substituto seguro.`, "error");
+    } else {
+        showNotify(`${cleanName} bloqueado: ${changes.length} posição(ões) redistribuída(s), meta mensal ${BALANCE_LIMITS.maxGap} alunos.`, "success");
+    }
+};
+
+useEffect(() => {
+    if (!user) return;
+    if (!data || data.length === 0) return;
+    if (isSaving) return;
+    if (blockedCleanupRunningRef.current) return;
+
+    const affectedRows = data.filter(row => {
+        return getBlockRolesForClass(row).some(role => isBlockedInstructorName(row[role]));
+    });
+
+    if (affectedRows.length === 0) return;
+
+    blockedCleanupRunningRef.current = true;
+    const affectedNames = [...new Set(affectedRows.flatMap(row => {
+        return getBlockRolesForClass(row)
+            .map(role => row[role])
+            .filter(nome => isBlockedInstructorName(nome))
+            .map(nome => getCanonical(nome));
+    }))].filter(Boolean);
+
+    const redistribution = redistributeBlockedInstructorRoles(data, blockedInstructors);
+    const logEntry = {
+        id: Date.now(),
+        timestamp: new Date().toISOString(),
+        type: "Redistribuição Automática de Bloqueados",
+        classId: affectedNames.join(', ') || 'Instrutores bloqueados',
+        before: `${affectedRows.length} turma(s) ainda tinham instrutor bloqueado (${affectedNames.join(', ') || 'bloqueados'}).`,
+        after: `${redistribution.changes.length} posição(ões) redistribuída(s), ${redistribution.balanceMoves.length} ajuste(s) cronológico(s), ${redistribution.unresolved.length} sem substituto. Regra ativa: diferença máxima de ${BALANCE_LIMITS.maxGap} alunos por mês quando possível.`
+    };
+
+    persist(redistribution.rows, substitutions, [logEntry, ...logs], blockedInstructors)
+        .finally(() => {
+            setTimeout(() => {
+                blockedCleanupRunningRef.current = false;
+            }, 1000);
+        });
+
+    if (redistribution.unresolved.length > 0) {
+        showNotify(`Instrutores bloqueados redistribuídos, mas ${redistribution.unresolved.length} posição(ões) ficaram sem substituto seguro.`, "error");
+    } else {
+        showNotify(`${affectedNames.join(' e ')} redistribuído(s). Meta mensal: até ${BALANCE_LIMITS.maxGap} alunos de diferença.`, "success");
+    }
+}, [user, data, blockedInstructors, isSaving]);
 
             const getRankedAnalystOptions = (targetCourse, pendingData = [], customPool = null) => {
                 const stats = {};
@@ -909,8 +2629,11 @@ const handleClearAllData = () => {
                 checkAndReplace('instrutor1', newItem.instrutor1, newItem.inicio);
                 checkAndReplace('instrutor2', newItem.instrutor2, newItem.dataTransferencia);
                 
-                if (newItem.modalidade === 'Técnica' || newItem.dataTransferencia2) {
+                if (newItem.modalidade === 'Técnica') {
                     checkAndReplace('instrutor3', newItem.instrutor3, newItem.dataTransferencia2);
+                } else {
+                    newItem.instrutor3 = '';
+                    newItem.dataTransferencia2 = '';
                 }
                 
                 if (checkEmpty(newItem.analista)) {
@@ -926,6 +2649,201 @@ const handleClearAllData = () => {
                 }
                 
                 return { resultItem: newItem, autoAssigned };
+            };
+
+            const getRoleActiveOnImportDate = (row, referenceDateStr) => {
+                const statusNorm = normalizeText(row.status);
+                const modalidade = getSafeModalidade(row);
+
+                if (modalidade === 'Técnica' && (statusNorm.includes('p2') || statusNorm.includes('instrutor 3'))) return 'instrutor3';
+                if (statusNorm.includes('p1') || statusNorm.includes('instrutor 2')) return 'instrutor2';
+                if (statusNorm.includes('ativo') || statusNorm.includes('instrutor 1')) return 'instrutor1';
+
+                const ref = new Date((referenceDateStr || viewDate) + 'T00:00:00');
+                const start = safeString(row.inicio).length === 10 ? new Date(row.inicio + 'T00:00:00') : null;
+                const transfer1 = safeString(row.dataTransferencia).length === 10 ? new Date(row.dataTransferencia + 'T00:00:00') : null;
+                const transfer2 = safeString(row.dataTransferencia2).length === 10 ? new Date(row.dataTransferencia2 + 'T00:00:00') : null;
+                const end = safeString(row.termino).length === 10 ? new Date(row.termino + 'T00:00:00') : null;
+
+                if (start && ref < start) return '';
+                if (end && ref > end) return '';
+                if (modalidade === 'Técnica' && transfer2 && ref >= transfer2) return 'instrutor3';
+                if (transfer1 && ref >= transfer1) return 'instrutor2';
+                if (start && ref >= start) return 'instrutor1';
+
+                return '';
+            };
+
+            const getRoleDateForAutoDistribution = (row, role) => {
+                if (role === 'instrutor1') return safeString(row.inicio).length === 10 ? row.inicio : viewDate;
+                if (role === 'instrutor2') return safeString(row.dataTransferencia).length === 10 ? row.dataTransferencia : '';
+                if (role === 'instrutor3') return safeString(row.dataTransferencia2).length === 10 ? row.dataTransferencia2 : '';
+                return viewDate;
+            };
+
+            const autoDistributeImportedBackup = (rawRows, instructorPool, analystPool, preserveCurrentInstructor = false) => {
+                const rows = rawRows.map(row => {
+                    const item = {
+                        ...row,
+                        modalidade: getSafeModalidade(row),
+                        instrutor1: '',
+                        instrutor2: '',
+                        instrutor3: '',
+                        autoAssignedLogs: {}
+                    };
+
+                    if (item.modalidade !== 'Técnica') {
+                        item.instrutor3 = '';
+                        item.dataTransferencia2 = '';
+                    }
+
+                    return item;
+                });
+
+                const summary = [];
+                const lockedMoveKeys = new Set();
+
+                if (preserveCurrentInstructor) {
+                    rows.forEach((row, index) => {
+                        const currentInstructor = sanitizeName(rawRows[index].instrutorAtual);
+                        const currentRole = currentInstructor ? getRoleActiveOnImportDate(row, viewDate) : '';
+
+                        if (!currentInstructor || !currentRole || isBlockedInstructorName(currentInstructor)) return;
+                        if (row.modalidade === 'Técnica' && currentRole === 'instrutor3' && !isTecnicaInstructor(currentInstructor)) return;
+
+                        row[currentRole] = currentInstructor;
+                        row.autoAssignedLogs[currentRole] = {
+                            nome: currentInstructor,
+                            type: 'preserved-current',
+                            reason: `Preservado como instrutor atual na importação limpa (${formatDatePTBR(viewDate)}).`
+                        };
+                        lockedMoveKeys.add(`${safeString(row.id) || index}|${currentRole}`);
+                        summary.push({
+                            turmaId: row.id,
+                            curso: row.curso,
+                            modalidade: row.modalidade,
+                            changes: {
+                                [currentRole]: {
+                                    nome: currentInstructor,
+                                    type: 'preserved-current',
+                                    reason: 'Instrutor atual preservado no papel ativo pela data/status da turma.'
+                                }
+                            }
+                        });
+                    });
+                }
+
+                const tasks = [];
+                rows.forEach((row, index) => {
+                    getBalanceRolesForClass(row).forEach(role => {
+                        if (row[role]) return;
+                        const dateStr = getRoleDateForAutoDistribution(row, role);
+                        if (role !== 'instrutor1' && !dateStr) return;
+                        tasks.push({
+                            index,
+                            role,
+                            dateStr,
+                            alunos: parseInt(row.alunos) || 0
+                        });
+                    });
+                });
+
+                tasks.sort((a, b) => {
+                    if (a.dateStr !== b.dateStr) return a.dateStr.localeCompare(b.dateStr);
+                    return b.alunos - a.alunos;
+                });
+
+                const futureDates = getFutureBalanceDates(rows);
+
+                tasks.forEach(task => {
+                    const row = rows[task.index];
+                    const excludes = getBalanceRolesForClass(row)
+                        .filter(role => role !== task.role)
+                        .map(role => row[role])
+                        .filter(Boolean);
+
+                    const excludeNorms = excludes.map(normalizeText);
+                    const options = instructorPool
+                        .filter(nome => {
+                            const norm = normalizeText(nome);
+                            if (!norm || excludeNorms.includes(norm) || isBlockedInstructorName(nome)) return false;
+                            if (row.modalidade === 'Técnica' && !isTecnicaInstructor(nome)) return false;
+                            return true;
+                        })
+                        .map(nome => {
+                            const simulatedRows = rows.map((item, idx) => {
+                                if (idx !== task.index) return item;
+                                return { ...item, [task.role]: nome };
+                            });
+
+                            if (getDuplicateInstructorInClass(simulatedRows[task.index])) return null;
+
+                            const impactDates = getBalanceImpactDatesForMove(simulatedRows[task.index], task.role, futureDates, task.dateStr);
+                            const courseKey = `${getSafeModalidade(row)}|${safeString(row.curso)}`;
+                            let score = 0;
+                            let maxLoad = 0;
+                            let sameCourseMax = 0;
+
+                            impactDates.forEach(dateStr => {
+                                const snapshot = getBalanceSnapshot(simulatedRows, dateStr, instructorPool);
+                                const info = getBalancePenaltyForSnapshot(snapshot);
+                                const hard = getHardBalanceScore(snapshot, info);
+                                const instInfo = snapshot.find(inst => normalizeText(inst.nome) === normalizeText(nome));
+                                const instLoad = instInfo ? instInfo.totalAlunos : 0;
+                                const sameCourse = instInfo && instInfo.cursos ? (instInfo.cursos[courseKey] || 0) : 0;
+
+                                maxLoad = Math.max(maxLoad, instLoad);
+                                sameCourseMax = Math.max(sameCourseMax, sameCourse);
+                                score += hard.hardScore;
+                                score += (info.gap || 0) * (info.gap || 0) * 45;
+                                score += Math.max(0, (info.gap || 0) - BALANCE_LIMITS.maxGap) * Math.max(0, (info.gap || 0) - BALANCE_LIMITS.maxGap) * 300;
+                                score += Math.max(0, info.max.totalAlunos - info.effectiveMax) * Math.max(0, info.max.totalAlunos - info.effectiveMax) * 120;
+                                score += Math.max(0, info.effectiveMin - info.min.totalAlunos) * Math.max(0, info.effectiveMin - info.min.totalAlunos) * 90;
+                                score += Math.abs(instLoad - info.effectiveIdeal) * 25;
+                                score += Math.max(0, instLoad - BALANCE_LIMITS.max) * 1200;
+                                score += Math.max(0, info.effectiveMin - instLoad) * 120;
+                            });
+
+                            score += maxLoad * 8;
+                            score += sameCourseMax * 250;
+                            if (sameCourseMax > BALANCE_LIMITS.maxSameCourse) {
+                                score += (sameCourseMax - BALANCE_LIMITS.maxSameCourse) * 5000;
+                            }
+
+                            return { nome, score, maxLoad, sameCourseMax };
+                        })
+                        .filter(Boolean)
+                        .sort((a, b) => a.score - b.score);
+
+                    if (options.length === 0) return;
+
+                    row[task.role] = options[0].nome;
+                    row.autoAssignedLogs[task.role] = {
+                        nome: options[0].nome,
+                        type: 'auto-future',
+                        reason: `Distribuição limpa do backup pela data ${formatDatePTBR(task.dateStr)}.`
+                    };
+                    summary.push({
+                        turmaId: row.id,
+                        curso: row.curso,
+                        modalidade: row.modalidade,
+                        changes: {
+                            [task.role]: {
+                                nome: options[0].nome,
+                                type: 'auto-future',
+                                reason: `Preenchido automaticamente na distribuição limpa do backup.`
+                            }
+                        }
+                    });
+                });
+
+                rows.forEach(row => {
+                    if (row.autoAssignedLogs && Object.keys(row.autoAssignedLogs).length === 0) {
+                        delete row.autoAssignedLogs;
+                    }
+                });
+
+                return { rows, summary, lockedMoveKeys };
             };
 
             const globalInstructorStats = useMemo(() => {
@@ -952,7 +2870,7 @@ const handleClearAllData = () => {
                 });
               
                 Object.values(stats).forEach(st => { 
-                    if (BLOCKED_INSTRUCTORS.includes(normalizeText(st.nome))) {
+                    if (blockedInstructors.includes(normalizeText(st.nome))) {
                         st.alerts.push({ msg: `🚫 Bloqueado para novas turmas`, type: 'red' });
                     } else if (st.totalAlunos >= 300) {
                         st.alerts.push({ msg: `Estouro: ${st.totalAlunos} alunos`, type: 'red' });
@@ -966,7 +2884,7 @@ const handleClearAllData = () => {
                     }
                 });
                 return stats;
-            }, [processedData, data, uniqueInstrutores]);
+            }, [processedData, data, uniqueInstrutores, blockedInstructors]);
 
             const dashboardInstructors = useMemo(() => {
                 const aggr = {};
@@ -1070,6 +2988,8 @@ const handleClearAllData = () => {
                             let newDB = [...data];
                             let newSubsDB = [...substitutions];
                             let newLogsDB = [...logs];
+                            let cleanImportLog = null;
+                            let cleanImportSummary = null;
 
                             if (wb.SheetNames.includes("Turmas_DB")) { 
                                 const ws = wb.Sheets["Turmas_DB"]; 
@@ -1086,8 +3006,93 @@ const handleClearAllData = () => {
                                     dataTransferencia2: fmtDate(row['Passagem 2'] || row['dataTransferencia2']),
                                     instrutor1: safeString(row['Instrutor 1'] || row['instrutor1']),
                                     instrutor2: safeString(row['Instrutor 2'] || row['instrutor2']),
-                                    instrutor3: safeString(row['Instrutor 3'] || row['instrutor3'])
+                                    instrutor3: safeString(row['Instrutor 3'] || row['instrutor3']),
+                                    instrutorAtual: safeString(row['Instrutor Atual'] || row['instrutorAtual']),
+                                    status: safeString(row['Situação'] || row['status']),
+                                    autoAssignedLogs: row['autoAssignedLogs'] ? row['autoAssignedLogs'] : undefined
                                 }));
+
+                                const instructorSlotsFilled = newDB.reduce((acc, row) => {
+                                    return acc + ['instrutor1', 'instrutor2', 'instrutor3'].filter(role => sanitizeName(row[role])).length;
+                                }, 0);
+                                const currentInstructorCount = newDB.filter(row => sanitizeName(row.instrutorAtual)).length;
+                                const blankInstructorBackup = newDB.length > 0 && instructorSlotsFilled === 0 && currentInstructorCount > 0;
+
+                                if (blankInstructorBackup) {
+                                    const runCleanDistribution = window.confirm(
+                                        `Detectei um backup com Instrutor 1, 2 e 3 em branco, mas com Instrutor Atual preenchido.\n\n` +
+                                        `Deseja fazer a DISTRIBUIÇÃO LIMPA DO ZERO agora?\n\n` +
+                                        `O sistema irá preservar início, término e passagens, manter o Instrutor Atual no papel ativo da turma e calcular automaticamente as passagens futuras/recebimentos.\n\n` +
+                                        `Regra de equilíbrio: diferença máxima de ${BALANCE_LIMITS.maxGap} alunos entre o instrutor com maior e menor carga em cada mês, quando houver turmas suficientes para isso. Luciano e Claire ficam bloqueados e não recebem novas turmas.`
+                                    );
+
+                                    if (runCleanDistribution) {
+                                        const currentNames = newDB.map(row => sanitizeName(row.instrutorAtual)).filter(Boolean);
+                                        const combinedInsts = [...new Set([...uniqueInstrutores, ...extraInstructors, ...currentNames].map(safeString).filter(Boolean))]
+                                            .filter(nome => !isBlockedInstructorName(nome));
+                                        const nextExtraInstructors = [...new Set([...extraInstructors, ...combinedInsts].map(safeString).filter(Boolean))];
+                                        setExtraInstructors(nextExtraInstructors);
+                                        localStorage.setItem(EXTRA_INSTRUCTORS_KEY, JSON.stringify(nextExtraInstructors));
+
+                                        const distributionResult = autoDistributeImportedBackup(newDB, combinedInsts, uniqueAnalistas, true);
+                                        const importPriorityStart = new Date((viewDate || new Date().toISOString().split('T')[0]) + 'T00:00:00');
+                                        importPriorityStart.setMonth(importPriorityStart.getMonth() + 1, 1);
+                                        const importPriorityHorizon = new Date((viewDate || new Date().toISOString().split('T')[0]) + 'T00:00:00');
+                                        importPriorityHorizon.setMonth(importPriorityHorizon.getMonth() + 5);
+                                        const importPriorityDates = getCriticalChronologicalPriorityDates(distributionResult.rows, combinedInsts, 14)
+                                            .filter(dateStr => {
+                                                const dateObj = new Date(dateStr + 'T00:00:00');
+                                                return dateObj >= importPriorityStart && dateObj <= importPriorityHorizon;
+                                            })
+                                            .slice(0, 10);
+                                        const balanceResult = executeChronologicalAutoBalance(distributionResult.rows, distributionResult.lockedMoveKeys, combinedInsts, {
+                                            priorityDateList: importPriorityDates,
+                                            maxPriorityDates: 10,
+                                            priorityRepairMoves: 8,
+                                            priorityRepairCycles: 1,
+                                            priorityMaxDonors: 8,
+                                            protectPriorityDate: false,
+                                            maxRepairIssues: 5,
+                                            maxRepairMoves: 8
+                                        });
+
+                                        const monthlyAudit = getMonthlyBalanceSweepPlan(balanceResult.rows, combinedInsts, 5);
+                                        const pendingPossibleMonthText = [...new Set(monthlyAudit.priorityDates.map(dateStr => getMonthName(dateStr.slice(0, 7))))]
+                                            .join(', ');
+                                        const impossibleMonthText = monthlyAudit.impossibleMonths
+                                            .map(item => `${getMonthName(item.monthKey)} (média ${item.avg})`)
+                                            .join(', ');
+                                        const balanceSummary = balanceResult.moves.map(move => {
+                                            const rowAfterMove = balanceResult.rows[move.index] || move.row;
+                                            return {
+                                                turmaId: rowAfterMove.id,
+                                                curso: rowAfterMove.curso,
+                                                modalidade: rowAfterMove.modalidade,
+                                                changes: {
+                                                    [move.role]: {
+                                                        nome: move.to,
+                                                        type: 'rebalance-future',
+                                                        reason: `Ajuste cronológico em ${formatDatePTBR(move.dateStr)}. Antes estava com ${move.from}.`
+                                                    }
+                                                }
+                                            };
+                                        });
+
+                                        newDB = balanceResult.rows;
+                                        cleanImportLog = {
+                                            id: Date.now(),
+                                            timestamp: new Date().toISOString(),
+                                            type: "Importação Limpa",
+                                            classId: "Backup",
+                                            before: `${newDB.length} turma(s) importada(s) com instrutores em branco.`,
+                                            after: `${distributionResult.summary.length} ação(ões) sinalizada(s), ${balanceResult.moves.length} ajuste(s) cronológico(s), preservando instrutor atual e calculando passagens futuras por período integral. Varredura mensal priorizada: ${importPriorityDates.map(formatDatePTBR).join(', ') || 'nenhuma'}. Meses ainda acima da meta com média possível: ${pendingPossibleMonthText || 'nenhum no horizonte'}. Meses abaixo de 200 por média: ${impossibleMonthText || 'nenhum no horizonte'}. Restaram ${balanceResult.remainingIssues.length} alerta(s) para validação.`
+                                        };
+
+                                        if (distributionResult.summary.length > 0 || balanceSummary.length > 0) {
+                                            cleanImportSummary = [...distributionResult.summary, ...balanceSummary].slice(0, 120);
+                                        }
+                                    }
+                                }
                                 importedClasses = newDB.length; 
                             }
                             if (wb.SheetNames.includes("Subs_DB")) { 
@@ -1099,8 +3104,14 @@ const handleClearAllData = () => {
                                 const ws = wb.Sheets["Logs_DB"]; 
                                 newLogsDB = XLSX.utils.sheet_to_json(ws); 
                             }
+                            if (cleanImportLog) {
+                                newLogsDB = [cleanImportLog, ...newLogsDB];
+                            }
                             
                             persist(newDB, newSubsDB, newLogsDB);
+                            if (cleanImportSummary) {
+                                setImportSummaryModal(cleanImportSummary);
+                            }
                             showNotify(`Sincronização Completa! Turmas: ${importedClasses}, Subs: ${importedSubs}.`);
                             return;
                         }
@@ -1211,6 +3222,11 @@ const handleClearAllData = () => {
             const handleCreateClass = (e) => { 
                 e.preventDefault(); 
                 const { resultItem, autoAssigned } = smartAssignClass({ ...newClass, alunos: parseInt(newClass.alunos)||0 });
+                const duplicateInstructor = getDuplicateInstructorInClass(resultItem);
+                if (duplicateInstructor) {
+                    showNotify("Erro: o mesmo instrutor não pode ser Instrutor 1, 2 ou 3 na mesma turma.", "error");
+                    return;
+                }
                 const newLogs = addLog("Criação", resultItem.id, "Inexistente", `Criada: ${resultItem.curso} (${resultItem.alunos} alunos) [${resultItem.modalidade}]`);
                 
                 const existingIdx = data.findIndex(d => String(d.id) === String(resultItem.id));
@@ -1259,26 +3275,44 @@ const handleClearAllData = () => {
             const ClassChain = ({ cls, currentInst }) => {
                 const cInst = getCanonical(currentInst);
                 const isTecnica = cls.modalidade === 'Técnica';
+                const getRoleLog = (role) => {
+                    if (!cls.autoAssignedLogs || typeof cls.autoAssignedLogs !== 'object') return null;
+                    return cls.autoAssignedLogs[role] || null;
+                };
+                const renderInstructorStep = (role, label, colorClass, activeColorClass) => {
+                    const roleLog = getRoleLog(role);
+                    const isActive = getCanonical(cls[role]) === cInst;
+                    const isPreserved = roleLog && roleLog.type === 'preserved-current';
+                    const isBlockedRedistribution = roleLog && roleLog.type === 'blocked-redistribution';
+                    const badge = roleLog ? (isPreserved ? 'Atual' : (isBlockedRedistribution ? 'Bloq.' : 'IA')) : '';
+                    const badgeClass = isPreserved
+                        ? 'bg-blue-100 text-blue-700 border-blue-200'
+                        : (isBlockedRedistribution
+                            ? 'bg-red-100 text-red-700 border-red-200'
+                            : 'bg-purple-100 text-purple-700 border-purple-200');
+                    const title = roleLog && roleLog.reason ? `${label}: ${roleLog.reason}` : label;
+
+                    return (
+                        <span className={`px-1.5 py-0.5 rounded border flex items-center gap-1 ${isActive ? activeColorClass : colorClass}`} title={title}>
+                            <span>{cls[role] || 'A Definir'}</span>
+                            {badge && <span className={`text-[8px] leading-none px-1 py-0.5 rounded border font-black ${badgeClass}`}>{badge}</span>}
+                        </span>
+                    );
+                };
                 
                 return (
                     <div className="mt-2 pt-2 border-t border-slate-100 flex flex-col gap-1 w-full bg-slate-50 p-2 rounded-lg">
                         <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Cadeia Docente:</span>
                         <div className="flex items-center flex-wrap gap-x-1 gap-y-1 text-[10px] font-bold">
-                            <span className={`px-1.5 py-0.5 rounded border ${getCanonical(cls.instrutor1) === cInst ? 'bg-blue-600 text-white border-blue-700' : 'bg-white text-slate-600 border-slate-300'}`} title="Instrutor 1 (Início)">
-                                {cls.instrutor1 || 'A Definir'}
-                            </span>
+                            {renderInstructorStep('instrutor1', 'Instrutor 1 (Início)', 'bg-white text-slate-600 border-slate-300', 'bg-blue-600 text-white border-blue-700')}
                             
                             <span className="text-slate-300 text-[8px] font-black">➔</span>
-                            <span className={`px-1.5 py-0.5 rounded border flex flex-col items-center ${getCanonical(cls.instrutor2) === cInst ? 'bg-green-600 text-white border-green-700 shadow' : 'bg-white text-slate-600 border-slate-300'}`} title="Instrutor 2 (Passagem 1)">
-                                {cls.instrutor2 || 'A Definir'}
-                            </span>
+                            {renderInstructorStep('instrutor2', 'Instrutor 2 (Passagem 1)', 'bg-white text-slate-600 border-slate-300', 'bg-green-600 text-white border-green-700 shadow')}
                             
                             {(isTecnica || cls.instrutor3) && (
                                 <>
                                     <span className="text-slate-300 text-[8px] font-black">➔</span>
-                                    <span className={`px-1.5 py-0.5 rounded border flex flex-col items-center ${getCanonical(cls.instrutor3) === cInst ? 'bg-purple-600 text-white border-purple-700 shadow' : 'bg-white text-slate-600 border-slate-300'}`} title="Instrutor 3 (Passagem 2)">
-                                        {cls.instrutor3 || 'A Definir'}
-                                    </span>
+                                    {renderInstructorStep('instrutor3', 'Instrutor 3 (Passagem 2)', 'bg-white text-slate-600 border-slate-300', 'bg-purple-600 text-white border-purple-700 shadow')}
                                 </>
                             )}
                         </div>
@@ -1717,15 +3751,23 @@ const handleClearAllData = () => {
                             <div className="flex items-center gap-4"><img src="https://upload.wikimedia.org/wikipedia/commons/8/86/Senac_logo.svg" alt="Senac" className="h-10 w-auto" /><div className="border-l border-gray-300 pl-4 h-8 flex items-center"><h1 className="text-xl font-bold text-slate-800 tracking-tight">Portal da Supervisão</h1></div></div>
                             <div className="flex items-center gap-6">
                                 <button onClick={handleFullBackupExport} className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-xs flex gap-1 items-center shadow-lg transition border border-indigo-500 animate-pulse hover:animate-none"><Icons.Sync /> Backup</button>
+                                {LOCAL_TEST_MODE && <span className="px-3 py-2 bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold text-xs uppercase tracking-wide">Modo Local</span>}
                                 <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos (v100)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
                                 <div className="flex gap-2">
-                                    <button onClick={hardReset} className="px-3 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 font-bold text-xs flex gap-1 items-center shadow-sm transition border border-red-200">Limpar Tudo</button>
+                                    <button
+    onClick={rebalanceWorkload}
+    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"
+    title={`Reorganiza turmas atuais e futuras para manter diferença máxima de ${BALANCE_LIMITS.maxGap} alunos por mês quando possível`}
+>
+    <Icons.Robot /> Equilibrar Turmas
+</button>
                                     <button onClick={() => setIsSubModalOpen(true)} className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"><Icons.Switch /> Transferir</button>
+
                                     <button onClick={() => setIsNewInstModalOpen(true)} className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"><Icons.UserPlus /> Novo Instrutor</button>
                                     <button onClick={() => setIsFormOpen(true)} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"><Icons.Plus /> Nova Turma</button>
                                     
                                     {/* Botão de deslogar do sistema */}
-                                    <button onClick={() => window.authMethods.signOut(window.auth)} className="ml-2 px-3 py-2 bg-slate-100 text-slate-500 rounded-lg hover:bg-red-50 hover:text-red-600 font-bold text-sm flex gap-1 items-center shadow-sm transition">Sair</button>
+                                    <button onClick={() => LOCAL_TEST_MODE ? showNotify("Modo local ativo: sem conexão com Firebase.", "success") : window.authMethods.signOut(window.auth)} className="ml-2 px-3 py-2 bg-slate-100 text-slate-500 rounded-lg hover:bg-red-50 hover:text-red-600 font-bold text-sm flex gap-1 items-center shadow-sm transition">Sair</button>
                                 </div>
                             </div>
                         </div>
@@ -1925,7 +3967,7 @@ const handleClearAllData = () => {
                             <div>
                                 <h3 className="font-bold text-lg text-slate-800 group-hover:text-blue-600 transition flex items-center gap-2">
                                     {safeString(inst.nome)}
-                                    {BLOCKED_INSTRUCTORS.includes(normalizeText(inst.nome)) && <span title="Instrutor(a) Indisponível para novas turmas" className="text-xs">🚫</span>}
+                                    {blockedInstructors.includes(normalizeText(inst.nome)) && <span title="Instrutor(a) Indisponível para novas turmas" className="text-xs">🚫</span>}
                                 </h3>
                                 <p className="text-xs text-slate-400 font-semibold uppercase tracking-tighter">Instrutor</p>
                             </div>
@@ -2058,13 +4100,21 @@ const handleClearAllData = () => {
                                                 className="hidden"
                                                 checked={tecnicaWhitelist.includes(normalizeText(selectedInstructorDetail.nome))}
                                                 onChange={() => toggleTecnicaPermission(selectedInstructorDetail.nome)}
-                                            />
-                                            <span className={`w-2.5 h-2.5 rounded-full transition-colors ${tecnicaWhitelist.includes(normalizeText(selectedInstructorDetail.nome)) ? 'bg-green-400 shadow-[0_0_8px_#4ade80]' : 'bg-slate-500'}`}></span>
-                                            {tecnicaWhitelist.includes(normalizeText(selectedInstructorDetail.nome)) ? 'Técnica: LIGADA' : 'Técnica: DESLIGADA'}
-                                        </label>
+                                    />
+                                    <span className={`w-2.5 h-2.5 rounded-full transition-colors ${tecnicaWhitelist.includes(normalizeText(selectedInstructorDetail.nome)) ? 'bg-green-400 shadow-[0_0_8px_#4ade80]' : 'bg-slate-500'}`}></span>
+                                    {tecnicaWhitelist.includes(normalizeText(selectedInstructorDetail.nome)) ? 'Técnica: LIGADA' : 'Técnica: DESLIGADA'}
+                                </label>
 
-                                        <button onClick={() => {
-                                            const today = new Date();
+                                <button
+                                    onClick={() => handleBlockInstructor(selectedInstructorDetail.nome)}
+                                    className="bg-red-600 hover:bg-red-700 px-4 py-2 text-white font-bold text-sm rounded-lg shadow transition flex items-center gap-2 border border-red-500"
+                                    title="Bloqueia o instrutor e redistribui todas as turmas atuais e futuras"
+                                >
+                                    <Icons.Trash /> Bloquear / Redistribuir
+                                </button>
+
+                                <button onClick={() => {
+                                    const today = new Date();
                                             const m = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
                                             setEmailPeriod({ start: m, end: m });
                                             setEmailConfigModal(true);
@@ -2107,6 +4157,7 @@ const handleClearAllData = () => {
                                                 {selectedInstructorDetail.organized.activeClasses.map(t => {
                                                     const isAuto = t.autoAssignedLogs && Object.values(t.autoAssignedLogs).some(log => getCanonical(typeof log === 'object' ? log.nome : log) === selectedInstructorDetail.nome);
                                                     const myLogEntry = t.autoAssignedLogs ? Object.values(t.autoAssignedLogs).find(log => getCanonical(typeof log === 'object' ? log.nome : log) === selectedInstructorDetail.nome) : null;
+                                                    const isPreservedCurrent = myLogEntry && typeof myLogEntry === 'object' && myLogEntry.type === 'preserved-current';
                                                     
                                                     return (
                                                     <div key={t.id + '-act'} className={`p-4 border rounded-xl flex flex-col gap-2 group hover:shadow-md transition bg-white ${t.isSubstitution ? 'border-purple-200' : isAuto ? 'border-purple-400 shadow-[0_0_10px_rgba(168,85,247,0.2)]' : 'border-blue-100'}`}>
@@ -2114,7 +4165,7 @@ const handleClearAllData = () => {
                                                             <div>
                                                                 <div className="flex items-center gap-2">
                                                                     <span className={`font-bold text-sm ${t.isSubstitution ? 'text-purple-900' : 'text-blue-900'}`}>Turma {safeString(t.id)}</span>
-                                                                    {isAuto && <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-purple-100 text-purple-700 border border-purple-200 shadow-sm flex items-center gap-1" title="Balanceamento Ativo">🤖 AUTO</span>}
+                                                                    {isAuto && <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold border shadow-sm flex items-center gap-1 ${isPreservedCurrent ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-purple-100 text-purple-700 border-purple-200'}`} title={isPreservedCurrent ? 'Instrutor atual preservado' : 'Balanceamento Ativo'}>{isPreservedCurrent ? 'Atual' : 'AUTO'}</span>}
                                                                 </div>
                                                                 <p className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1.5 mt-0.5">
                                                                     <span>{safeString(t.curso)} <span className="text-gray-400">({t.modalidade})</span></span>
@@ -2139,8 +4190,8 @@ const handleClearAllData = () => {
                                                         </div>
                                                         
                                                         {isAuto && myLogEntry && typeof myLogEntry === 'object' && myLogEntry.reason && (
-                                                            <div className="mt-1 bg-purple-50 border-l-2 border-purple-500 p-2 rounded text-[10px] text-purple-800 font-medium">
-                                                                <b className="block text-purple-900 mb-0.5">Intervenção da IA:</b>
+                                                            <div className={`mt-1 border-l-2 p-2 rounded text-[10px] font-medium ${isPreservedCurrent ? 'bg-blue-50 border-blue-500 text-blue-800' : 'bg-purple-50 border-purple-500 text-purple-800'}`}>
+                                                                <b className={`block mb-0.5 ${isPreservedCurrent ? 'text-blue-900' : 'text-purple-900'}`}>{isPreservedCurrent ? 'Instrutor atual preservado:' : 'Intervenção da IA:'}</b>
                                                                 {myLogEntry.reason}
                                                             </div>
                                                         )}
@@ -2149,6 +4200,7 @@ const handleClearAllData = () => {
                                                             <div className="flex gap-2 pt-2 border-t border-slate-100 mt-1 no-print">
     <button onClick={() => handleOpenEdit(t)} className="flex-1 bg-slate-50 border border-slate-200 text-slate-600 text-[10px] font-bold py-1.5 rounded hover:bg-slate-100 flex items-center justify-center gap-1 transition"><Icons.Edit /> {isAuto ? 'Validar / Editar' : 'Editar Turma'}</button>
     <button onClick={() => handleOpenTransferModal(t)} className="flex-1 bg-purple-50 border border-purple-100 text-purple-700 text-[10px] font-bold py-1.5 rounded hover:bg-purple-100 flex items-center justify-center gap-1 transition"><Icons.Switch /> Transferir</button>
+
     
     {/* --- INÍCIO DO BOTÃO DE EXCLUIR --- */}
     <button onClick={() => handleDeleteClass(t.id)} className="bg-red-50 border border-red-200 text-red-500 hover:bg-red-500 hover:text-white px-3 py-1.5 rounded flex items-center justify-center transition" title="Excluir Turma">
@@ -2170,6 +4222,7 @@ const handleClearAllData = () => {
                                                     {selectedInstructorDetail.organized.incomingClasses.map(t => {
                                                         const isAuto = t.autoAssignedLogs && Object.values(t.autoAssignedLogs).some(log => getCanonical(typeof log === 'object' ? log.nome : log) === selectedInstructorDetail.nome);
                                                         const myLogEntry = t.autoAssignedLogs ? Object.values(t.autoAssignedLogs).find(log => getCanonical(typeof log === 'object' ? log.nome : log) === selectedInstructorDetail.nome) : null;
+                                                        const isPreservedCurrent = myLogEntry && typeof myLogEntry === 'object' && myLogEntry.type === 'preserved-current';
 
                                                         return (
                                                         <div key={t.id + '-inc'} className={`p-4 border rounded-xl bg-orange-50/20 flex flex-col gap-2 ${isAuto ? 'border-purple-300 shadow-sm' : 'border-orange-100'}`}>
@@ -2177,7 +4230,7 @@ const handleClearAllData = () => {
                                                                 <div>
                                                                     <div className="flex items-center gap-2">
                                                                         <span className="font-bold text-sm text-orange-900">Turma {safeString(t.id)}</span>
-                                                                        {isAuto && <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-purple-100 text-purple-700 border border-purple-200 shadow-sm">🤖 AUTO</span>}
+                                                                        {isAuto && <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold border shadow-sm ${isPreservedCurrent ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-purple-100 text-purple-700 border-purple-200'}`}>{isPreservedCurrent ? 'Atual' : 'AUTO'}</span>}
                                                                     </div>
                                                                     <p className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1.5 mt-0.5">
                                                                         <span>{safeString(t.curso)}</span>
@@ -2194,8 +4247,8 @@ const handleClearAllData = () => {
                                                             </div>
                                                             
                                                             {isAuto && myLogEntry && typeof myLogEntry === 'object' && myLogEntry.reason && (
-                                                                <div className="mt-1 bg-purple-50 border-l-2 border-purple-500 p-2 rounded text-[10px] text-purple-800 font-medium">
-                                                                    <b className="block text-purple-900 mb-0.5">Intervenção da IA:</b>
+                                                                <div className={`mt-1 border-l-2 p-2 rounded text-[10px] font-medium ${isPreservedCurrent ? 'bg-blue-50 border-blue-500 text-blue-800' : 'bg-purple-50 border-purple-500 text-purple-800'}`}>
+                                                                    <b className={`block mb-0.5 ${isPreservedCurrent ? 'text-blue-900' : 'text-purple-900'}`}>{isPreservedCurrent ? 'Instrutor atual preservado:' : 'Intervenção da IA:'}</b>
                                                                     {myLogEntry.reason}
                                                                 </div>
                                                             )}
@@ -2428,19 +4481,33 @@ const handleClearAllData = () => {
                                                         <span className="font-bold text-slate-800 text-sm">Turma {item.turmaId}</span>
                                                         <p className="text-[10px] font-bold text-gray-500 uppercase">{item.curso} ({item.modalidade})</p>
                                                     </div>
-                                                    <span className="text-[10px] bg-purple-100 text-purple-700 px-2 py-1 rounded font-bold uppercase tracking-wide">Vaga Preenchida</span>
+                                                    <span className="text-[10px] bg-purple-100 text-purple-700 px-2 py-1 rounded font-bold uppercase tracking-wide">Sinalizado</span>
                                                 </div>
                                                 <div className="grid grid-cols-2 gap-2 mt-1">
                                                     {Object.entries(item.changes).map(([role, log]) => {
                                                         const nome = typeof log === 'object' ? log.nome : log;
                                                         const reason = typeof log === 'object' ? log.reason : 'Vaga preenchida';
+                                                        const type = typeof log === 'object' ? log.type : '';
+                                                        const tag = type === 'preserved-current'
+                                                            ? 'Instrutor atual preservado'
+                                                            : (type === 'blocked-redistribution'
+                                                                ? 'Redistribuição de bloqueado'
+                                                                : (type === 'rebalance-future' ? 'Ajuste fino IA' : 'Vaga IA'));
+                                                        const tagClass = type === 'preserved-current'
+                                                            ? 'bg-blue-100 text-blue-700 border-blue-200'
+                                                            : (type === 'blocked-redistribution'
+                                                                ? 'bg-red-100 text-red-700 border-red-200'
+                                                                : 'bg-purple-100 text-purple-700 border-purple-200');
                                                         return (
                                                             <div key={role} className="flex flex-col bg-slate-50 p-3 rounded-lg border border-purple-100">
-                                                                <span className="text-[9px] font-bold text-slate-400 uppercase">{role.replace('instrutor', 'Instrutor ')}</span>
+                                                                <div className="flex items-center justify-between gap-2">
+                                                                    <span className="text-[9px] font-bold text-slate-400 uppercase">{role.replace('instrutor', 'Instrutor ')}</span>
+                                                                    <span className={`text-[8px] font-black px-1.5 py-0.5 rounded border ${tagClass}`}>{tag}</span>
+                                                                </div>
                                                                 <span className="font-bold text-blue-700 text-sm flex items-center gap-2">
                                                                     {nome}
                                                                 </span>
-                                                                <span className="text-[10px] text-purple-700 mt-1.5 font-medium leading-tight">🤖 {reason}</span>
+                                                                <span className="text-[10px] text-purple-700 mt-1.5 font-medium leading-tight">{reason}</span>
                                                             </div>
                                                         );
                                                     })}
@@ -2769,7 +4836,7 @@ const handleClearAllData = () => {
                                                                     <option key={opt.nome} value={opt.nome}>{opt.emoji} {safeString(opt.nome)} ({safeString(opt.tip)})</option>
                                                                 ));
                                                             })()
-                                                        : uniqueInstrutores.filter(name => !BLOCKED_INSTRUCTORS.includes(normalizeText(name))).map(i => <option key={i} value={i}>{safeString(i)}</option>)}
+                    : uniqueInstrutores.filter(name => !blockedInstructors.includes(normalizeText(name))).map(i => <option key={i} value={i}>{safeString(i)}</option>)}
                                                     </select>
                                                     {newSub.turmaId && <span className="text-[10px] text-green-600 mt-1 font-bold">↑ Opções sugeridas pela Inteligência do Sistema</span>}
                                                 </div>
@@ -2865,6 +4932,12 @@ const handleClearAllData = () => {
             const [authChecking, setAuthChecking] = useState(true);
 
             useEffect(() => {
+                if (LOCAL_TEST_MODE) {
+                    setLoggedUser({ email: "modo-teste-local@senac.local", localMode: true });
+                    setAuthChecking(false);
+                    return;
+                }
+
                 if (!window.auth || !window.authMethods) {
                     setAuthChecking(false);
                     return;
