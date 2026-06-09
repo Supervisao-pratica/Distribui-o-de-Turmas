@@ -84,6 +84,11 @@
 <script>
       // Altere para false quando quiser voltar a usar Firebase.
       window.SGT_LOCAL_TEST_MODE = false;
+      window.sgtFirebaseError = null;
+      window.sgtFirebaseReady = new Promise((resolve, reject) => {
+        window.sgtResolveFirebaseReady = resolve;
+        window.sgtRejectFirebaseReady = reject;
+      });
     </script>
 <script type="module">
       // MODO TESTE LOCAL:
@@ -91,48 +96,78 @@
       // false = volta a usar Firebase normalmente.
       const LOCAL_TEST_MODE = window.SGT_LOCAL_TEST_MODE === true;
 
-      if (LOCAL_TEST_MODE) {
-        window.remoteDB = null;
-        window.dbMethods = null;
-        window.auth = null;
-        window.authMethods = {
-          signInWithEmailAndPassword: async () => ({ user: { email: "modo-teste-local@senac.local", localMode: true } }),
-          onAuthStateChanged: (_auth, callback) => {
-            setTimeout(() => callback({ email: "modo-teste-local@senac.local", localMode: true }), 0);
-            return () => {};
-          },
-          signOut: async () => {
-            console.log("Modo teste local ativo: logout Firebase ignorado.");
-          }
-        };
-      } else {
-        const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js");
-        const { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, onSnapshot } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js");
-        const { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js");
+      const sgtFirebaseBoot = (async () => {
+        if (LOCAL_TEST_MODE) {
+          window.remoteDB = null;
+          window.dbMethods = null;
+          window.auth = null;
+          window.authMethods = {
+            signInWithEmailAndPassword: async () => ({ user: { email: "modo-teste-local@senac.local", localMode: true } }),
+            onAuthStateChanged: (_auth, callback) => {
+              setTimeout(() => callback({ email: "modo-teste-local@senac.local", localMode: true }), 0);
+              return () => {};
+            },
+            signOut: async () => {
+              console.log("Modo teste local ativo: logout Firebase ignorado.");
+            }
+          };
+          return { localMode: true };
+        }
 
-        const firebaseConfig = {
-          apiKey: "AIzaSyAdjsftZXsQ00waKGsLDeY7lDqRgeU_DnM",
-          authDomain: "sgt-senac.firebaseapp.com",
-          projectId: "sgt-senac",
-          storageBucket: "sgt-senac.firebasestorage.app",
-          messagingSenderId: "278613531988",
-          appId: "1:278613531988:web:51af3366f7199c274b3cc1"
-        };
+        try {
+          const [
+            { initializeApp },
+            firestoreModule,
+            authModule
+          ] = await Promise.all([
+            import("https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js"),
+            import("https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js"),
+            import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js")
+          ]);
 
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-        const auth = getAuth(app);
+          const { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, onSnapshot } = firestoreModule;
+          const { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } = authModule;
 
-        window.remoteDB = db;
-        window.dbMethods = {
-          collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, onSnapshot
-        };
+          const firebaseConfig = {
+            apiKey: "AIzaSyAdjsftZXsQ00waKGsLDeY7lDqRgeU_DnM",
+            authDomain: "sgt-senac.firebaseapp.com",
+            projectId: "sgt-senac",
+            storageBucket: "sgt-senac.firebasestorage.app",
+            messagingSenderId: "278613531988",
+            appId: "1:278613531988:web:51af3366f7199c274b3cc1"
+          };
 
-        window.auth = auth;
-        window.authMethods = {
-          signInWithEmailAndPassword, onAuthStateChanged, signOut
-        };
-      }
+          const app = initializeApp(firebaseConfig);
+          const db = getFirestore(app);
+          const auth = getAuth(app);
+
+          window.remoteDB = db;
+          window.dbMethods = {
+            collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, onSnapshot
+          };
+
+          window.auth = auth;
+          window.authMethods = {
+            signInWithEmailAndPassword, onAuthStateChanged, signOut
+          };
+
+          return { localMode: false, app, db, auth };
+        } catch (error) {
+          window.sgtFirebaseError = error;
+          console.error("Falha ao inicializar Firebase:", error);
+          throw error;
+        }
+      })();
+
+      sgtFirebaseBoot
+        .then((result) => {
+          if (typeof window.sgtResolveFirebaseReady === 'function') window.sgtResolveFirebaseReady(result);
+        })
+        .catch((error) => {
+          if (typeof window.sgtRejectFirebaseReady === 'function') window.sgtRejectFirebaseReady(error);
+        });
+
+      window.sgtFirebaseReady = sgtFirebaseBoot;
     </script>
     </head>
 <body>
@@ -160,12 +195,26 @@
                 setLoading(true);
                 setError('');
                 try {
-                    await window.authMethods.signInWithEmailAndPassword(window.auth, email, password);
+                    if (window.sgtFirebaseReady && typeof window.sgtFirebaseReady.then === 'function') {
+                        await window.sgtFirebaseReady;
+                    }
+                    if (!window.auth || !window.authMethods || !window.authMethods.signInWithEmailAndPassword) {
+                        throw new Error('Firebase Auth ainda não está pronto.');
+                    }
+                    await window.authMethods.signInWithEmailAndPassword(window.auth, email.trim(), password);
                 } catch (err) {
                     console.error(err);
-                    setError('Acesso negado. Verifique se o e-mail e a senha estão corretos.');
+                    const code = safeString(err && (err.code || err.message));
+                    if (code.includes('auth/unauthorized-domain')) {
+                        setError('Domínio do GitHub não autorizado no Firebase Authentication.');
+                    } else if (code.includes('auth/invalid-credential') || code.includes('auth/wrong-password') || code.includes('auth/user-not-found')) {
+                        setError('Acesso negado. Verifique se o e-mail e a senha estão corretos.');
+                    } else {
+                        setError(`Falha no login: ${code || 'Firebase não respondeu.'}`);
+                    }
+                } finally {
+                    setLoading(false);
                 }
-                setLoading(false);
             };
 
             return (
@@ -4939,21 +4988,46 @@ useEffect(() => {
             const [authChecking, setAuthChecking] = useState(true);
 
             useEffect(() => {
+                let active = true;
+                let unsubscribe = null;
+
                 if (LOCAL_TEST_MODE) {
                     setLoggedUser({ email: "modo-teste-local@senac.local", localMode: true });
                     setAuthChecking(false);
-                    return;
+                    return () => { active = false; };
                 }
 
-                if (!window.auth || !window.authMethods) {
-                    setAuthChecking(false);
-                    return;
-                }
-                const unsubscribe = window.authMethods.onAuthStateChanged(window.auth, (currentUser) => {
-                    setLoggedUser(currentUser);
-                    setAuthChecking(false);
-                });
-                return () => unsubscribe();
+                const startAuth = async () => {
+                    try {
+                        if (window.sgtFirebaseReady && typeof window.sgtFirebaseReady.then === 'function') {
+                            await window.sgtFirebaseReady;
+                        }
+
+                        if (!active) return;
+
+                        if (!window.auth || !window.authMethods || !window.authMethods.onAuthStateChanged) {
+                            console.error("Firebase Auth não inicializou.", window.sgtFirebaseError);
+                            setAuthChecking(false);
+                            return;
+                        }
+
+                        unsubscribe = window.authMethods.onAuthStateChanged(window.auth, (currentUser) => {
+                            if (!active) return;
+                            setLoggedUser(currentUser);
+                            setAuthChecking(false);
+                        });
+                    } catch (error) {
+                        console.error("Erro ao preparar autenticação Firebase:", error);
+                        if (active) setAuthChecking(false);
+                    }
+                };
+
+                startAuth();
+
+                return () => {
+                    active = false;
+                    if (typeof unsubscribe === 'function') unsubscribe();
+                };
             }, []);
 
             if (authChecking) {
