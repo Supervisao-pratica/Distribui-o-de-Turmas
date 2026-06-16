@@ -905,102 +905,113 @@ const handleClearAllData = () => {
             };
 
             const getRankedInstructorOptions = (targetCourse, excludedInstructors = [], slotType = 'any', targetModalidade = 'Aperfeiçoamento', pendingData = [], customPool = null, evaluationDate = null, baseDataOverride = null) => {
-                const stats = {};
-                const isTecnica = targetModalidade === 'Técnica';
-                const pool = customPool || uniqueInstrutores;
-                
-                const normalizedExcludes = (Array.isArray(excludedInstructors) ? excludedInstructors : [excludedInstructors])
-                    .filter(Boolean)
-                    .map(normalizeText);
+    const stats = {};
+    const isTecnica = targetModalidade === 'Técnica';
+    const pool = customPool || uniqueInstrutores;
+    
+    const normalizedExcludes = (Array.isArray(excludedInstructors) ? excludedInstructors : [excludedInstructors])
+        .filter(Boolean)
+        .map(normalizeText);
 
-                let allowedInstructors = pool.filter(name => !blockedInstructors.includes(normalizeText(name)));
-                if (isTecnica) {
-                    allowedInstructors = allowedInstructors.filter(name => tecnicaWhitelist.includes(normalizeText(name)));
-                }
+    let allowedInstructors = pool.filter(name => !blockedInstructors.includes(normalizeText(name)));
+    if (isTecnica) {
+        allowedInstructors = allowedInstructors.filter(name => tecnicaWhitelist.includes(normalizeText(name)));
+    }
 
-                allowedInstructors.forEach(name => {
-                    if (normalizeText(name).includes('nao atribuido')) return;
-                    stats[name] = { nome: name, totalAlunos: 0, totalTurmas: 0, turmasDoCurso: 0, countAsInst1: 0, countAsInst2: 0 };
-                });
+    allowedInstructors.forEach(name => {
+        if (normalizeText(name).includes('nao atribuido')) return;
+        stats[name] = { nome: name, totalAlunos: 0, totalTurmas: 0, turmasDoCurso: 0, countAsInst1: 0, countAsInst2: 0 };
+    });
 
-                const normalizedTarget = normalizeText(targetCourse);
-                const allData = baseDataOverride !== null ? [...baseDataOverride, ...pendingData] : [...data, ...pendingData];
-                
-                const evalDateStr = (evaluationDate && evaluationDate.length === 10) ? evaluationDate : viewDate;
-                const targetDateObj = new Date(evalDateStr + 'T00:00:00'); 
+    const normalizedTarget = normalizeText(targetCourse);
+    const allData = baseDataOverride !== null ? [...baseDataOverride, ...pendingData] : [...data, ...pendingData];
+    
+    const evalDateStr = (evaluationDate && evaluationDate.length === 10) ? evaluationDate : viewDate;
+    const targetDateObj = new Date(evalDateStr + 'T00:00:00'); 
 
-                allData.forEach(row => {
-                    const i1 = getCanonical(safeString(row.instrutor1));
-                    const i2 = getCanonical(safeString(row.instrutor2));
-                    if (i1 && stats[i1]) stats[i1].countAsInst1++;
-                    if (i2 && stats[i2]) stats[i2].countAsInst2++;
+    allData.forEach(row => {
+        const i1 = getCanonical(safeString(row.instrutor1));
+        const i2 = getCanonical(safeString(row.instrutor2));
+        if (i1 && stats[i1]) stats[i1].countAsInst1++;
+        if (i2 && stats[i2]) stats[i2].countAsInst2++;
 
-                    const info = getActiveInfoOnDate(row, targetDateObj);
-                    
-                    if (info.status === 'Finalizado' || info.status === 'Agendado') return; 
+        const info = getActiveInfoOnDate(row, targetDateObj);
+        
+        if (info.status === 'Finalizado' || info.status === 'Agendado') return; 
 
-                    const activeInst = info.inst;
-                    if (activeInst && stats[activeInst]) {
-                        stats[activeInst].totalAlunos += parseInt(row.alunos) || 0;
-                        stats[activeInst].totalTurmas += 1;
-                        if (normalizeText(row.curso) === normalizedTarget && getSafeModalidade(row) === targetModalidade) {
-                            stats[activeInst].turmasDoCurso += 1;
-                        }
-                    }
-                });
+        const activeInst = info.inst;
+        if (activeInst && stats[activeInst]) {
+            stats[activeInst].totalAlunos += parseInt(row.alunos) || 0;
+            stats[activeInst].totalTurmas += 1;
+            if (normalizeText(row.curso) === normalizedTarget && getSafeModalidade(row) === targetModalidade) {
+                stats[activeInst].turmasDoCurso += 1;
+            }
+        }
+    });
 
-                return Object.values(stats)
-                    .filter(i => !normalizedExcludes.includes(normalizeText(i.nome)))
-                    .map(inst => {
-                        let score = inst.totalAlunos; 
-                        let tip = `[${inst.totalAlunos} Alunos na data]`;
-                        let type = "good";
-                        let emoji = "✅";
-                        let flags = [];
-                        
-                        if (inst.turmasDoCurso >= 3) {
-                            score += 300; 
-                            emoji = "⚠️"; type = "warning";
-                            flags.push(`⚠️ Concentração (${inst.turmasDoCurso}x)`);
-                        } else if (inst.turmasDoCurso >= 2) {
-                            score += 50;
-                        } else if (inst.turmasDoCurso === 0) {
-                            score -= 30; 
-                            flags.push(`⭐ Novo no Curso`);
-                        }
+    const availableStats = Object.values(stats).filter(i => !normalizedExcludes.includes(normalizeText(i.nome)));
+    
+    // Calcula quem tem menos alunos AGORA para checar o gap de 40
+    const minLoadCurrent = availableStats.length > 0 ? Math.min(...availableStats.map(i => i.totalAlunos)) : 0;
 
-                        if (inst.totalAlunos >= BALANCE_LIMITS.max) {
-                            score += 50000; emoji = "🔴"; type = "bad"; 
-                            flags.push(`🔴 Carga Máxima (Não Alocar)`);
-                        } else if (inst.totalAlunos >= BALANCE_LIMITS.min + BALANCE_LIMITS.maxGap) {
-                            score += 300; if(emoji === "✅" || emoji === "⭐") emoji = "🟡"; type = "warning"; 
-                            flags.push(`🟡 Carga Alta`);
-                        }
+    return availableStats.map(inst => {
+        let score = inst.totalAlunos; 
+        let tip = `[${inst.totalAlunos} Alunos na data]`;
+        let type = "good";
+        let emoji = "✅";
+        let flags = [];
 
-                        if (inst.totalAlunos < BALANCE_LIMITS.min - 50) {
-                            score -= 1500; 
-                            if(emoji === "✅" || emoji === "⭐") emoji = "🚀";
-                            flags.push(`🚀 Urgente: Ocioso`);
-                        } else if (inst.totalAlunos < BALANCE_LIMITS.min) {
-                            score -= 900;
-                            if(emoji === "✅" || emoji === "⭐") emoji = "🚀";
-                            flags.push(`🚀 Prioridade: abaixo de ${BALANCE_LIMITS.min}`);
-                        }
+        // ==========================================
+        // 1º REGRA DE TITÂNIO: MÍNIMO DE 200 ALUNOS
+        // ==========================================
+        if (inst.totalAlunos < BALANCE_LIMITS.min) {
+            score -= 500000; // Prioridade ABSOLUTA
+            emoji = "🚀";
+            flags.push(`🚀 Urgente: < ${BALANCE_LIMITS.min} Alunos`);
+        }
 
-                        const totalRoles = inst.countAsInst1 + inst.countAsInst2;
-                        const ratio1 = totalRoles > 0 ? inst.countAsInst1 / totalRoles : 0;
-                        if (slotType === 'instrutor1' && inst.countAsInst1 >= 3 && ratio1 > 0.7) {
-                            score += 150; 
-                            if(emoji !== "🔴" && emoji !== "🟠" && emoji !== "🔥") emoji = "⛔"; 
-                            flags.push(`⛔ Equilíbrio P1/P2`);
-                        }
+        // ==========================================
+        // 2º REGRA DE TITÂNIO: GAP MÁXIMO DE 40
+        // ==========================================
+        // Estima que a nova turma trará ~25 alunos. Se isso estourar o gap, penaliza pesadamente.
+        if ((inst.totalAlunos + 25) > minLoadCurrent + BALANCE_LIMITS.maxGap) {
+            score += 800000; 
+            if(emoji === "✅") emoji = "✋"; type = "warning";
+            flags.push(`✋ Teto de Gap (> ${BALANCE_LIMITS.maxGap} da base)`);
+        }
 
-                        if (flags.length > 0) tip += " - " + flags.join(" | ");
+        if (inst.turmasDoCurso >= 3) {
+            score += 300; 
+            emoji = "⚠️"; type = "warning";
+            flags.push(`⚠️ Concentração (${inst.turmasDoCurso}x)`);
+        } else if (inst.turmasDoCurso >= 2) {
+            score += 50;
+        } else if (inst.turmasDoCurso === 0) {
+            score -= 30; 
+            flags.push(`⭐ Novo no Curso`);
+        }
 
-                        return { ...inst, score, label: `(${inst.totalAlunos} alunos)`, emoji, type, tip };
-                    })
-                    .sort((a,b) => a.score - b.score);
-            };
+        if (inst.totalAlunos >= BALANCE_LIMITS.max) {
+            score += 50000; emoji = "🔴"; type = "bad"; 
+            flags.push(`🔴 Carga Máxima (Não Alocar)`);
+        } else if (inst.totalAlunos >= BALANCE_LIMITS.min + BALANCE_LIMITS.maxGap) {
+            score += 300; if(emoji === "✅" || emoji === "⭐") emoji = "🟡"; type = "warning"; 
+            flags.push(`🟡 Carga Alta`);
+        }
+
+        const totalRoles = inst.countAsInst1 + inst.countAsInst2;
+        const ratio1 = totalRoles > 0 ? inst.countAsInst1 / totalRoles : 0;
+        if (slotType === 'instrutor1' && inst.countAsInst1 >= 3 && ratio1 > 0.7) {
+            score += 150; 
+            if(emoji !== "🔴" && emoji !== "🟡" && emoji !== "✋" && emoji !== "🚀") emoji = "⛔"; 
+            flags.push(`⛔ Equilíbrio P1/P2`);
+        }
+
+        if (flags.length > 0) tip += " - " + flags.join(" | ");
+
+        return { ...inst, score, label: `(${inst.totalAlunos} alunos)`, emoji, type, tip };
+    }).sort((a,b) => a.score - b.score);
+};
 // === IA: REBALANCEAMENTO FUTURO DE INSTRUTORES ===
 const BALANCE_LIMITS = {
     min: 200,      // O sistema agora tentará segurar isso como piso absoluto
