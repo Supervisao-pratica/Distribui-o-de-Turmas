@@ -134,11 +134,12 @@ const firebaseConfig = {
   apiKey: "AIzaSyAdjsftZXsQ00waKGsLDeY7lDqRgeU_DnM",
   authDomain: "sgt-senac.firebaseapp.com",
   projectId: "sgt-senac",
-  storageBucket: "sgt-senac.appspot.com",
+  storageBucket: "sgt-senac.firebasestorage.app",
   messagingSenderId: "278613531988",
   appId: "1:278613531988:web:51af3366f7199c274b3cc1"
 };
 
+// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
