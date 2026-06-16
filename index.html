@@ -125,25 +125,21 @@
             import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js")
           ]);
 
-          
-import { initializeApp } from "firebase/app";
-import { getFirestore, collection, getDocs, addDoc } from "firebase/firestore";
-import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
+          const { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, onSnapshot } = firestoreModule;
+          const { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } = authModule;
 
-const firebaseConfig = {
-  apiKey: "AIzaSyAdjsftZXsQ00waKGsLDeY7lDqRgeU_DnM",
-  authDomain: "sgt-senac.firebaseapp.com",
-  projectId: "sgt-senac",
-  storageBucket: "sgt-senac.firebasestorage.app",
-  messagingSenderId: "278613531988",
-  appId: "1:278613531988:web:51af3366f7199c274b3cc1"
-};
+          const firebaseConfig = {
+            apiKey: "AIzaSyAdjsftZXsQ00waKGsLDeY7lDqRgeU_DnM",
+            authDomain: "sgt-senac.firebaseapp.com",
+            projectId: "sgt-senac",
+            storageBucket: "sgt-senac.firebasestorage.app",
+            messagingSenderId: "278613531988",
+            appId: "1:278613531988:web:51af3366f7199c274b3cc1"
+          };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
-
+          const app = initializeApp(firebaseConfig);
+          const db = getFirestore(app);
+          const auth = getAuth(app);
 
           window.remoteDB = db;
           window.dbMethods = {
@@ -1007,12 +1003,13 @@ const handleClearAllData = () => {
             };
 // === IA: REBALANCEAMENTO FUTURO DE INSTRUTORES ===
 const BALANCE_LIMITS = {
-    min: 200,      // O sistema agora tentará segurar isso como piso absoluto
-    ideal: 240,    // Aumentamos o ideal para o sistema não "relaxar" quando chegar em 210
+    min: 200,
+    ideal: 235,
     max: 270,
     hardMax: 280,
     maxGap: 40,
-    monthsAhead: 6, // Aumentei para o sistema olhar mais longe
+    maxSameCourse: 3,
+    monthsAhead: 0,
     maxMoves: 220
 };
 
@@ -1183,18 +1180,41 @@ const getBalanceSnapshot = (rows, dateStr, instructorPoolOverride = null) => {
 const getBalanceTargetsForSnapshot = (snapshot) => {
     const base = snapshot || [];
     const totalAlunos = base.reduce((acc, inst) => acc + inst.totalAlunos, 0);
-    const avg = base.length > 0 ? Math.round(totalAlunos / base.length) : BALANCE_LIMITS.ideal;
+    const avg = base.length > 0 ? Math.round(totalAlunos / base.length) : 0;
+    const halfGap = Math.floor(BALANCE_LIMITS.maxGap / 2);
+    const isMinPossible = base.length > 0 ? totalAlunos >= (BALANCE_LIMITS.min * base.length) : true;
 
-    // HARD FLOOR: 200 nunca pode ser relaxado para baixo, mesmo que a média caia.
-    // Antes: Math.max(min, avg - 20) podia ficar ABAIXO de 200 quando avg < 220,
-    // o que permitia instrutores com menos de 200 alunos em qualquer cenário.
-    let effectiveMin = BALANCE_LIMITS.min;
-    // O teto fica sempre amarrado ao piso (200 + 40 = 240), nunca à média,
-    // garantindo que max - min <= maxGap em qualquer cenário/mês.
-    let effectiveMax = Math.min(BALANCE_LIMITS.hardMax, effectiveMin + BALANCE_LIMITS.maxGap);
+    if (!isMinPossible) {
+        const lowVolumeMin = Math.max(0, avg - halfGap);
+        return {
+            avg,
+            effectiveMin: lowVolumeMin,
+            effectiveIdeal: avg,
+            effectiveMax: lowVolumeMin + BALANCE_LIMITS.maxGap,
+            totalAlunos,
+            isMinPossible
+        };
+    }
 
-    // Se o instrutor está abaixo do min, o alvo de "ideal" sobe para forçar a correção
-    let effectiveIdeal = Math.max(BALANCE_LIMITS.ideal, avg);
+    let effectiveMin = Math.max(BALANCE_LIMITS.min, avg - halfGap);
+    let effectiveMax = effectiveMin + BALANCE_LIMITS.maxGap;
+
+    if (avg > effectiveMax) {
+        effectiveMax = avg;
+        effectiveMin = Math.max(avg - BALANCE_LIMITS.maxGap, BALANCE_LIMITS.min);
+    }
+
+    if (effectiveMax > BALANCE_LIMITS.max && avg <= BALANCE_LIMITS.max) {
+        effectiveMax = BALANCE_LIMITS.max;
+        effectiveMin = Math.max(avg - BALANCE_LIMITS.maxGap, Math.min(effectiveMin, effectiveMax));
+    }
+
+    if (avg > BALANCE_LIMITS.max) {
+        effectiveMax = avg;
+        effectiveMin = Math.max(avg - BALANCE_LIMITS.maxGap, BALANCE_LIMITS.min);
+    }
+
+    const effectiveIdeal = avg || BALANCE_LIMITS.ideal;
 
     return {
         avg,
@@ -1202,7 +1222,7 @@ const getBalanceTargetsForSnapshot = (snapshot) => {
         effectiveIdeal,
         effectiveMax,
         totalAlunos,
-        isMinPossible: true 
+        isMinPossible
     };
 };
 
@@ -1727,10 +1747,7 @@ const getGlobalChronologicalBalanceScore = (rows, balanceDates, pool) => {
     }));
 
     const issues = dateInfos
-        .filter(info => info.top && (
-            info.gap > BALANCE_LIMITS.maxGap ||
-            (info.bottom && info.bottom.totalAlunos < BALANCE_LIMITS.min)
-        ))
+        .filter(info => info.top && info.gap > BALANCE_LIMITS.maxGap)
         .sort((a, b) => {
             if (b.gap !== a.gap) return b.gap - a.gap;
             return b.score - a.score;
@@ -1781,8 +1798,7 @@ const findFocusedChronologicalRepairMove = (rows, issues, balanceDates, pool, lo
     let bestMove = null;
 
     issues.slice(0, maxIssues).forEach(issue => {
-        const bottomBelowMin = issue.bottom && issue.bottom.totalAlunos < BALANCE_LIMITS.min;
-        if (!issue.top || (issue.gap <= BALANCE_LIMITS.maxGap && !bottomBelowMin)) return;
+        if (!issue.top || issue.gap <= BALANCE_LIMITS.maxGap) return;
 
         const bottomLoad = issue.bottom ? issue.bottom.totalAlunos : issue.snapshot[issue.snapshot.length - 1].totalAlunos;
         const donors = [...issue.snapshot]
@@ -1794,14 +1810,7 @@ const findFocusedChronologicalRepairMove = (rows, issues, balanceDates, pool, lo
             const donorNorm = normalizeText(donor.nome);
             const lowTargets = [...issue.snapshot]
                 .filter(inst => normalizeText(inst.nome) !== donorNorm && inst.totalAlunos < donor.totalAlunos)
-                .sort((a, b) => {
-                    // Instrutores abaixo do piso de 200 sempre vêm primeiro como destino,
-                    // independente da diferença numérica para o doador.
-                    const aBelow = a.totalAlunos < BALANCE_LIMITS.min ? 1 : 0;
-                    const bBelow = b.totalAlunos < BALANCE_LIMITS.min ? 1 : 0;
-                    if (aBelow !== bBelow) return bBelow - aBelow;
-                    return a.totalAlunos - b.totalAlunos;
-                })
+                .sort((a, b) => a.totalAlunos - b.totalAlunos)
                 .slice(0, 8);
 
             const candidates = rows
@@ -1854,15 +1863,7 @@ const findFocusedChronologicalRepairMove = (rows, issues, balanceDates, pool, lo
 
                     const afterIssue = getChronologicalDateScore(simulatedRows, issue.dateStr, pool);
                     if (!afterIssue.top) return;
-
-                    const beforeBottomBelowMin = Math.max(0, BALANCE_LIMITS.min - bottomLoad);
-                    const afterBottomLoad = afterIssue.bottom ? afterIssue.bottom.totalAlunos : bottomLoad;
-                    const afterBottomBelowMin = Math.max(0, BALANCE_LIMITS.min - afterBottomLoad);
-                    const floorImproved = afterBottomBelowMin < beforeBottomBelowMin;
-
-                    // Só descarta o movimento se ele não melhora nem o gap, nem o score,
-                    // nem o piso de 200 alunos (caso esse seja a violação ativa).
-                    if (afterIssue.gap >= issue.gap && afterIssue.score >= issue.score && !floorImproved) return;
+                    if (afterIssue.gap >= issue.gap && afterIssue.score >= issue.score) return;
 
                     const affectedDates = getFocusedMoveDates(simulatedRows[item.index], item.role, balanceDates, issue.dateStr, priorityDateStr);
                     const unsafeImpact = affectedDates.some(dateStr => {
@@ -1903,7 +1904,6 @@ const findFocusedChronologicalRepairMove = (rows, issues, balanceDates, pool, lo
                     let score = 0;
                     score += afterIssue.gap * 120000;
                     score += Math.max(0, afterIssue.gap - BALANCE_LIMITS.maxGap) * Math.max(0, afterIssue.gap - BALANCE_LIMITS.maxGap) * 8000;
-                    score += afterBottomBelowMin * afterBottomBelowMin * 150000;
                     score += afterFocused - beforeFocused;
                     score += sameCourseAfter * 800;
                     if (sameCourseAfter > BALANCE_LIMITS.maxSameCourse) score += (sameCourseAfter - BALANCE_LIMITS.maxSameCourse) * 9000;
@@ -1938,10 +1938,7 @@ const getCriticalChronologicalPriorityDates = (rows, pool, maxDates = 8) => {
     const dates = getChronologicalBalanceDates(rows);
     const issueInfos = dates
         .map(dateStr => ({ dateStr, ...getChronologicalDateScore(rows, dateStr, pool) }))
-        .filter(info => info.top && (
-            info.gap > BALANCE_LIMITS.maxGap ||
-            (info.bottom && info.bottom.totalAlunos < BALANCE_LIMITS.min)
-        ));
+        .filter(info => info.top && info.gap > BALANCE_LIMITS.maxGap);
 
     const dayNinePriorities = issueInfos
         .filter(info => info.dateStr.endsWith('-09'))
@@ -2019,13 +2016,9 @@ const getMonthlyBalanceSweepPlan = (rows, pool, monthsAhead = 5) => {
             return;
         }
 
-        const worstBottomBelowMin = worst.bottom && worst.bottom.totalAlunos < BALANCE_LIMITS.min;
-        if (worst.gap <= BALANCE_LIMITS.maxGap && !worstBottomBelowMin) return;
+        if (worst.gap <= BALANCE_LIMITS.maxGap) return;
 
-        const dayNine = monthInfos.find(info => info.dateStr.endsWith('-09') && (
-            info.gap > BALANCE_LIMITS.maxGap ||
-            (info.bottom && info.bottom.totalAlunos < BALANCE_LIMITS.min)
-        ));
+        const dayNine = monthInfos.find(info => info.dateStr.endsWith('-09') && info.gap > BALANCE_LIMITS.maxGap);
         [dayNine, worst].filter(Boolean).forEach(info => {
             if (!priorityDates.includes(info.dateStr)) priorityDates.push(info.dateStr);
         });
@@ -2064,16 +2057,10 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
     balanceDates.forEach((dateStr, dateIndex) => {
         for (let iter = 0; iter < chronologicalIterations; iter++) {
             const current = getChronologicalDateScore(newRows, dateStr, pool);
-            const currentBelowMin = current.bottom && current.bottom.totalAlunos < BALANCE_LIMITS.min;
-            if (!current.top || (current.gap <= BALANCE_LIMITS.maxGap && !currentBelowMin)) break;
+            if (!current.top || current.gap <= BALANCE_LIMITS.maxGap) break;
 
             const lowTargets = [...current.snapshot]
-                .sort((a, b) => {
-                    const aBelow = a.totalAlunos < BALANCE_LIMITS.min ? 1 : 0;
-                    const bBelow = b.totalAlunos < BALANCE_LIMITS.min ? 1 : 0;
-                    if (aBelow !== bBelow) return bBelow - aBelow;
-                    return a.totalAlunos - b.totalAlunos;
-                })
+                .sort((a, b) => a.totalAlunos - b.totalAlunos)
                 .slice(0, 6);
 
             const candidates = newRows
@@ -2125,10 +2112,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                     if (getDuplicateInstructorInClass(simulatedRows[item.index])) return;
 
                     const after = getChronologicalDateScore(simulatedRows, dateStr, pool);
-                    const beforeBelowMin = Math.max(0, BALANCE_LIMITS.min - (current.bottom ? current.bottom.totalAlunos : 0));
-                    const afterBelowMin = Math.max(0, BALANCE_LIMITS.min - (after.bottom ? after.bottom.totalAlunos : 0));
-                    const floorImproved = afterBelowMin < beforeBelowMin;
-                    if (after.score >= current.score && after.gap >= current.gap && !floorImproved) return;
+                    if (after.score >= current.score && after.gap >= current.gap) return;
 
                     const previousDatesOk = balanceDates.slice(0, dateIndex).every(previousDate => {
                         if (lockedPreviousGaps[previousDate] === undefined) return true;
@@ -2207,8 +2191,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
 
         for (let iter = 0; iter < (options.priorityRepairMoves || 28); iter++) {
             const priorityInfo = { dateStr, ...getChronologicalDateScore(newRows, dateStr, pool) };
-            const priorityBelowMin = priorityInfo.bottom && priorityInfo.bottom.totalAlunos < BALANCE_LIMITS.min;
-            if (!priorityInfo.top || (priorityInfo.gap <= BALANCE_LIMITS.maxGap && !priorityBelowMin)) break;
+            if (!priorityInfo.top || priorityInfo.gap <= BALANCE_LIMITS.maxGap) break;
 
             const priorityMove = findFocusedChronologicalRepairMove(
                 newRows,
@@ -2236,10 +2219,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
             const beforeMoveCount = moves.length;
             const orderedPriorityDates = priorityDateList
                 .map(dateStr => ({ dateStr, ...getChronologicalDateScore(newRows, dateStr, pool) }))
-                .filter(info => info.top && (
-                    info.gap > BALANCE_LIMITS.maxGap ||
-                    (info.bottom && info.bottom.totalAlunos < BALANCE_LIMITS.min)
-                ))
+                .filter(info => info.top && info.gap > BALANCE_LIMITS.maxGap)
                 .sort((a, b) => {
                     if (b.gap !== a.gap) return b.gap - a.gap;
                     return b.score - a.score;
@@ -2256,10 +2236,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
     for (let iter = 0; iter < (options.maxRepairMoves || 35); iter++) {
         const remaining = balanceDates
             .map(dateStr => ({ dateStr, ...getChronologicalDateScore(newRows, dateStr, pool) }))
-            .filter(info => info.top && (
-                info.gap > BALANCE_LIMITS.maxGap ||
-                (info.bottom && info.bottom.totalAlunos < BALANCE_LIMITS.min)
-            ))
+            .filter(info => info.top && info.gap > BALANCE_LIMITS.maxGap)
             .sort((a, b) => {
                 const aPriority = priorityDateList.includes(a.dateStr) ? 1 : 0;
                 const bPriority = priorityDateList.includes(b.dateStr) ? 1 : 0;
@@ -2291,10 +2268,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
 
     const remainingIssues = balanceDates
         .map(dateStr => ({ dateStr, ...getChronologicalDateScore(newRows, dateStr, pool) }))
-        .filter(info => info.top && (
-            info.gap > BALANCE_LIMITS.maxGap ||
-            (info.bottom && info.bottom.totalAlunos < BALANCE_LIMITS.min)
-        ));
+        .filter(info => info.top && info.gap > BALANCE_LIMITS.maxGap);
 
     return { rows: newRows, moves, remainingIssues };
 };
