@@ -451,14 +451,27 @@
 
             // === 3. LÓGICA DO FIREBASE (Câmera ao Vivo) ===
             useEffect(() => {
-                // Trava de Segurança: Só liga a câmera se o usuário estiver logado
-                if (!user) return;
-                if (LOCAL_TEST_MODE) return;
-                if (!window.remoteDB || !window.dbMethods) return;
+                if (!user || LOCAL_TEST_MODE) return;
 
-                const { doc, onSnapshot } = window.dbMethods;
-                
-                const unsub = onSnapshot(doc(window.remoteDB, "sgt", "dadosGerais"), (docSnap) => {
+                let active = true;
+                let unsubscribe = null;
+
+                const startSnapshot = async () => {
+                    try {
+                        if (window.sgtFirebaseReady && typeof window.sgtFirebaseReady.then === 'function') {
+                            await window.sgtFirebaseReady;
+                        }
+
+                        if (!active) return;
+
+                        if (!window.remoteDB || !window.dbMethods || !window.dbMethods.onSnapshot) {
+                            throw new Error('Firebase Firestore ainda não está pronto.');
+                        }
+
+                        const { doc, onSnapshot } = window.dbMethods;
+
+                        unsubscribe = onSnapshot(doc(window.remoteDB, "sgt", "dadosGerais"), (docSnap) => {
+                    if (!active) return;
                     if (docSnap.exists()) {
                         const dbData = docSnap.data();
                         const parsedData = (dbData.data || []).map(r => ({...r, modalidade: getSafeModalidade(r)}));
@@ -477,16 +490,26 @@
                             localStorage.setItem(EXTRA_INSTRUCTORS_KEY, JSON.stringify(cleanExtra));
                         }
                     }
-                }, (error) => {
-                    console.error("Erro ao ler Firebase: ", error);
-                    showNotify(`Firebase: falha ao ler dados (${error.code || 'erro'}). Confirme login e regras.`, "error");
-                });
+                        }, (error) => {
+                            console.error("Erro ao ler Firebase: ", error);
+                            showNotify(`Firebase: falha ao ler dados (${error.code || 'erro'}). Confirme login e regras.`, "error");
+                        });
+                    } catch (error) {
+                        console.error("Erro ao iniciar leitura Firebase: ", error);
+                        if (active) showNotify(`Firebase: falha ao iniciar leitura (${error.code || error.message || 'erro'}).`, "error");
+                    }
+                };
 
-                return () => unsub();
+                startSnapshot();
+
+                return () => {
+                    active = false;
+                    if (typeof unsubscribe === 'function') unsubscribe();
+                };
             }, [user]);
 
             // === 4. FUNÇÃO PERSIST DEFINITIVA ===
-            const persist = async (newData, newSubs, newLogs, nextBlockedInstructors = null) => {
+            const persist = async (newData, newSubs, newLogs, nextBlockedInstructors = null, nextExtraInstructors = null) => {
                 // === FILTRO ANTI-ERRO 400 (FIREBASE) ===
         // Remove qualquer lixo 'undefined' invisível que a IA tenha gerado
         if (newData) newData = JSON.parse(JSON.stringify(newData));
@@ -494,6 +517,7 @@
         if (newLogs) newLogs = JSON.parse(JSON.stringify(newLogs));
         // =======================================
                 const blockedToSave = Array.isArray(nextBlockedInstructors) ? nextBlockedInstructors : blockedInstructors;
+                const extraToSave = Array.isArray(nextExtraInstructors) ? nextExtraInstructors : extraInstructors;
                 setIsSaving(true);
                 
                 setData(newData);
@@ -504,9 +528,16 @@
                 localStorage.setItem(SUB_KEY, JSON.stringify(newSubs));
                 if(newLogs) localStorage.setItem(LOG_KEY, JSON.stringify(newLogs));
                 localStorage.setItem(BLOCK_KEY, JSON.stringify(blockedToSave));
+                localStorage.setItem(EXTRA_INSTRUCTORS_KEY, JSON.stringify(extraToSave));
                 
-                if (!LOCAL_TEST_MODE && window.remoteDB && window.dbMethods) {
+                if (!LOCAL_TEST_MODE) {
                     try {
+                        if (window.sgtFirebaseReady && typeof window.sgtFirebaseReady.then === 'function') {
+                            await window.sgtFirebaseReady;
+                        }
+                        if (!window.remoteDB || !window.dbMethods) {
+                            throw new Error("Firestore não inicializou.");
+                        }
                         if (!window.auth || !window.auth.currentUser) {
                             throw new Error("Usuário não autenticado no Firebase Auth.");
                         }
@@ -516,7 +547,7 @@
                             logs: newLogs || logs,
                             substitutions: newSubs,
                             blockedInstructors: blockedToSave,
-                            extraInstructors,
+                            extraInstructors: extraToSave,
                             lastUpdate: new Date().toISOString()
                         });
                         console.log("🔥 Salvo no Firebase com sucesso!");
@@ -841,7 +872,7 @@ const handleClearAllData = () => {
                 });
 
                 const newLogs = addLog("Onboarding de Instrutor", "Lote", "Múltiplas", changesLog.join(' | '));
-                persist(newData, substitutions, newLogs);
+                persist(newData, substitutions, newLogs, blockedInstructors, nextExtraInstructors);
                 
                 showNotify(`Sucesso! ${cleanName} cadastrado(a) e incluído(a) no equilíbrio automático.`);
                 setIsNewInstModalOpen(false);
@@ -932,7 +963,7 @@ const handleClearAllData = () => {
     const normalizedTarget = normalizeText(targetCourse);
     const allData = baseDataOverride !== null ? [...baseDataOverride, ...pendingData] : [...data, ...pendingData];
     
-    const evalDateStr = (evaluationDate && evaluationDate.length === 10) ? evaluationDate : viewDate;
+    const evalDateStr = clampToBalanceRuleStart((evaluationDate && evaluationDate.length === 10) ? evaluationDate : viewDate);
     const targetDateObj = new Date(evalDateStr + 'T00:00:00'); 
 
     allData.forEach(row => {
@@ -1047,7 +1078,16 @@ const BALANCE_LIMITS = {
     maxSameCourse: 2,
     maxTurmasGap: 2, 
     monthsAhead: 6, 
+    enforceFrom: '2026-06-01',
     maxMoves: 1500 // <--- AUMENTADO: Fôlego para processar até o final do ano
+};
+
+const getBalanceRuleStartDate = () => new Date(`${BALANCE_LIMITS.enforceFrom}T00:00:00`);
+
+const clampToBalanceRuleStart = (dateStr) => {
+    const safe = safeString(dateStr);
+    if (safe.length !== 10) return BALANCE_LIMITS.enforceFrom;
+    return safe < BALANCE_LIMITS.enforceFrom ? BALANCE_LIMITS.enforceFrom : safe;
 };
 
 const isBlockedInstructorName = (nome) => {
@@ -1118,8 +1158,7 @@ const getActiveRoleOnBalanceDate = (row, dateStr) => {
 
 const getFutureBalanceDates = (rows) => {
     const dates = new Set();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = getBalanceRuleStartDate();
     let latestRelevantDate = new Date(today);
 
     dates.add(getBalanceDateStr(today));
@@ -1219,11 +1258,10 @@ const getBalanceTargetsForSnapshot = (snapshot) => {
     const totalAlunos = base.reduce((acc, inst) => acc + inst.totalAlunos, 0);
     const avg = base.length > 0 ? Math.round(totalAlunos / base.length) : BALANCE_LIMITS.ideal;
 
-    // FORÇA: Se a média estiver abaixo de 200, o sistema entende que precisa subir a barra
-    let effectiveMin = Math.max(BALANCE_LIMITS.min, avg - 20); 
+    const isMinPossible = base.length === 0 || totalAlunos >= (BALANCE_LIMITS.min * base.length);
+    let effectiveMin = isMinPossible ? Math.max(BALANCE_LIMITS.min, avg - 20) : BALANCE_LIMITS.min;
     let effectiveMax = Math.min(BALANCE_LIMITS.hardMax, effectiveMin + BALANCE_LIMITS.maxGap);
     
-    // Se o instrutor está abaixo do min, o alvo de "ideal" sobe para forçar a correção
     let effectiveIdeal = Math.max(BALANCE_LIMITS.ideal, avg);
 
     return {
@@ -1232,7 +1270,7 @@ const getBalanceTargetsForSnapshot = (snapshot) => {
         effectiveIdeal,
         effectiveMax,
         totalAlunos,
-        isMinPossible: true 
+        isMinPossible
     };
 };
 
@@ -1318,7 +1356,7 @@ const getBalanceIssues = (rows, datesOverride = null) => {
         const hardInfo = getHardBalanceScore(snapshot, info);
 
         const belowTarget = info.min.totalAlunos < info.effectiveMin;
-        const belowMinimum = info.isMinPossible && info.min.totalAlunos < BALANCE_LIMITS.min;
+        const belowMinimum = info.min.totalAlunos < BALANCE_LIMITS.min;
 
         if (
             info.max.totalAlunos > info.effectiveMax ||
@@ -1642,10 +1680,12 @@ const executeBalanceOnRows = (sourceRows, lockedMoveKeys = new Set()) => {
 
 const getChronologicalBalanceDates = (rows) => {
     const dates = new Set();
-    const start = new Date((viewDate || new Date().toISOString().split('T')[0]) + 'T00:00:00');
+    const start = getBalanceRuleStartDate();
+    const selectedDate = new Date((viewDate || BALANCE_LIMITS.enforceFrom) + 'T00:00:00');
     const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
     let latest = new Date(cursor);
     dates.add(getBalanceDateStr(start));
+    if (selectedDate >= start) dates.add(getBalanceDateStr(selectedDate));
 
     rows.forEach(row => {
         ['inicio', 'dataTransferencia', 'dataTransferencia2', 'termino'].forEach(field => {
@@ -1656,13 +1696,13 @@ const getChronologicalBalanceDates = (rows) => {
         });
     });
 
-    const maxLatest = new Date(cursor.getFullYear(), cursor.getMonth() + 18, 1);
+    const maxLatest = new Date(cursor.getFullYear(), cursor.getMonth() + 60, 1);
     if (latest > maxLatest) latest = maxLatest;
 
     while (cursor <= latest) {
         // Checkpoints semanais evitam que o sistema fique equilibrado no dia 01,
         // mas desbalanceado depois de entradas/passagens no meio do mês.
-        [1, 8, 9, 15, 22].forEach(day => {
+        [1, 8, 9, 15, 22, 28].forEach(day => {
             const checkpoint = new Date(cursor.getFullYear(), cursor.getMonth(), day);
             if (checkpoint >= start && checkpoint <= latest) dates.add(getBalanceDateStr(checkpoint));
         });
@@ -1710,43 +1750,48 @@ const getChronologicalDateScore = (rows, dateStr, instructorPoolOverride = null)
     const minPossible = totalAlunos >= (BALANCE_LIMITS.min * snapshot.length);
     const gapOverflow = Math.max(0, gap - BALANCE_LIMITS.maxGap);
     const topOverflow = Math.max(0, top.totalAlunos - BALANCE_LIMITS.max);
-    const belowMinTotal = minPossible
-        ? snapshot.reduce((acc, inst) => acc + Math.max(0, BALANCE_LIMITS.min - inst.totalAlunos), 0)
-        : 0;
-    const belowMinCount = minPossible
-        ? snapshot.filter(inst => inst.totalAlunos < BALANCE_LIMITS.min).length
-        : 0;
+    const belowMinTotal = snapshot.reduce((acc, inst) => acc + Math.max(0, BALANCE_LIMITS.min - inst.totalAlunos), 0);
+    const belowMinCount = snapshot.filter(inst => inst.totalAlunos < BALANCE_LIMITS.min).length;
+    const classLoads = snapshot.map(inst => inst.totalTurmas);
+    const turmasGap = classLoads.length > 0 ? Math.max(...classLoads) - Math.min(...classLoads) : 0;
+    const courseOverflow = snapshot.reduce((acc, inst) => {
+        return acc + Object.values(inst.cursos || {}).reduce((sum, qtd) => {
+            const overflow = Math.max(0, qtd - BALANCE_LIMITS.maxSameCourse);
+            return sum + (overflow * overflow);
+        }, 0);
+    }, 0);
 
     let score = 0;
     score += gapOverflow * gapOverflow * 10000;
     score += topOverflow * topOverflow * 3000;
     score += snapshot.reduce((acc, inst) => acc + (Math.abs(inst.totalAlunos - avg) * 12), 0);
+    score += snapshot.reduce((acc, inst) => {
+        const below = Math.max(0, BALANCE_LIMITS.min - inst.totalAlunos);
+        return acc + (below * below * 1000);
+    }, 0);
+    score += turmasGap * turmasGap * 1200;
+    score += courseOverflow * 2500;
 
-    if (minPossible) {
-        score += snapshot.reduce((acc, inst) => {
-            const below = Math.max(0, BALANCE_LIMITS.min - inst.totalAlunos);
-            return acc + (below * below * 1000);
-        }, 0);
-    }
-
-    return { score, gap, gapOverflow, topOverflow, belowMinTotal, belowMinCount, top, bottom, snapshot, avg, minPossible };
+    return { score, gap, gapOverflow, topOverflow, belowMinTotal, belowMinCount, turmasGap, courseOverflow, top, bottom, snapshot, avg, minPossible };
 };
 
 const hasChronologicalBalanceIssue = (info) => {
     if (!info || !info.top) return false;
     return (info.gapOverflow || Math.max(0, info.gap - BALANCE_LIMITS.maxGap)) > 0
-        || (info.minPossible && (info.belowMinTotal || 0) > 0);
+        || (info.belowMinTotal || 0) > 0;
 };
 
 const getStrictChronologicalIssueScore = (info) => {
     if (!info || !info.top) return 0;
     const gapOverflow = info.gapOverflow || Math.max(0, (info.gap || 0) - BALANCE_LIMITS.maxGap);
-    const belowMinTotal = info.minPossible ? (info.belowMinTotal || 0) : 0;
-    const belowMinCount = info.minPossible ? (info.belowMinCount || 0) : 0;
+    const belowMinTotal = info.belowMinTotal || 0;
+    const belowMinCount = info.belowMinCount || 0;
 
     return (gapOverflow * gapOverflow * 1000000)
         + (belowMinTotal * belowMinTotal * 120000)
         + (belowMinCount * 600000)
+        + ((info.turmasGap || 0) * (info.turmasGap || 0) * 8000)
+        + ((info.courseOverflow || 0) * 12000)
         + (info.score || 0);
 };
 
@@ -1784,22 +1829,17 @@ const getGlobalChronologicalBalanceScore = (rows, balanceDates, pool) => {
 
     const issues = dateInfos
         .filter(info => hasChronologicalBalanceIssue(info))
-        .sort((a, b) => {
-            if (b.gap !== a.gap) return b.gap - a.gap;
-            return b.score - a.score;
-        });
+        .sort((a, b) => getStrictChronologicalIssueScore(b) - getStrictChronologicalIssueScore(a));
 
     const worstGap = issues.length > 0 ? issues[0].gap : 0;
     const score = dateInfos.reduce((acc, info) => {
         if (!info.top) return acc;
         const gapOverflow = Math.max(0, info.gap - BALANCE_LIMITS.maxGap);
         const topOverflow = Math.max(0, info.top.totalAlunos - BALANCE_LIMITS.max);
-        const lowPenalty = info.minPossible
-            ? info.snapshot.reduce((sum, inst) => {
-                const below = Math.max(0, BALANCE_LIMITS.min - inst.totalAlunos);
-                return sum + (below * below * 500);
-            }, 0)
-            : 0;
+        const lowPenalty = info.snapshot.reduce((sum, inst) => {
+            const below = Math.max(0, BALANCE_LIMITS.min - inst.totalAlunos);
+            return sum + (below * below * 500);
+        }, 0);
 
         return acc
             + info.score
@@ -1822,9 +1862,7 @@ const getFocusedChronologicalScore = (rows, dates, pool) => {
         const info = getChronologicalDateScore(rows, dateStr, pool);
         const gapOverflow = Math.max(0, info.gap - BALANCE_LIMITS.maxGap);
         const topOverflow = info.top ? Math.max(0, info.top.totalAlunos - BALANCE_LIMITS.max) : 0;
-        const lowPenalty = info.minPossible
-            ? info.snapshot.reduce((sum, inst) => sum + Math.max(0, BALANCE_LIMITS.min - inst.totalAlunos), 0)
-            : 0;
+        const lowPenalty = info.snapshot.reduce((sum, inst) => sum + Math.max(0, BALANCE_LIMITS.min - inst.totalAlunos), 0);
 
         return acc + info.score + (gapOverflow * gapOverflow * 8000) + (topOverflow * topOverflow * 1200) + (lowPenalty * lowPenalty * 400);
     }, 0);
@@ -1905,9 +1943,12 @@ const findFocusedChronologicalRepairMove = (rows, issues, balanceDates, pool, lo
                     const unsafeImpact = affectedDates.some(dateStr => {
                         const before = getChronologicalDateScore(rows, dateStr, pool);
                         const after = getChronologicalDateScore(simulatedRows, dateStr, pool);
-                        const allowedGap = Math.max(BALANCE_LIMITS.maxGap + 35, before.gap + 12);
                         const topTooHigh = after.top && after.top.totalAlunos > BALANCE_LIMITS.hardMax + 20;
-                        return after.gap > allowedGap || topTooHigh;
+                        const createsIssue = !hasChronologicalBalanceIssue(before) && hasChronologicalBalanceIssue(after);
+                        const beforeStrict = getStrictChronologicalIssueScore(before);
+                        const afterStrict = getStrictChronologicalIssueScore(after);
+                        const temporaryMargin = allowTemporaryImpact ? 500000 : 0;
+                        return createsIssue || afterStrict > beforeStrict + temporaryMargin || topTooHigh;
                     });
 
                     if (unsafeImpact && !allowTemporaryImpact) return;
@@ -1973,10 +2014,7 @@ const findFocusedChronologicalRepairMove = (rows, issues, balanceDates, pool, lo
 };
 
 const getCriticalChronologicalPriorityDates = (rows, pool, maxDates = 8) => {
-    const dates = getChronologicalBalanceDates(rows);
-    const issueInfos = dates
-        .map(dateStr => ({ dateStr, ...getChronologicalDateScore(rows, dateStr, pool) }))
-        .filter(info => hasChronologicalBalanceIssue(info));
+    const issueInfos = getStrictChronologicalIssuesForRows(rows, pool);
 
     const dayNinePriorities = issueInfos
         .filter(info => info.dateStr.endsWith('-09'))
@@ -1989,8 +2027,7 @@ const getCriticalChronologicalPriorityDates = (rows, pool, maxDates = 8) => {
         const monthKey = info.dateStr.slice(0, 7);
         if (
             !bestByMonth[monthKey] ||
-            info.gap > bestByMonth[monthKey].gap ||
-            (info.gap === bestByMonth[monthKey].gap && info.score > bestByMonth[monthKey].score)
+            getStrictChronologicalIssueScore(info) > getStrictChronologicalIssueScore(bestByMonth[monthKey])
         ) {
             bestByMonth[monthKey] = info;
         }
@@ -2002,8 +2039,7 @@ const getCriticalChronologicalPriorityDates = (rows, pool, maxDates = 8) => {
             if (a.dateStr.slice(0, 7) !== b.dateStr.slice(0, 7)) {
                 return a.dateStr.localeCompare(b.dateStr);
             }
-            if (b.gap !== a.gap) return b.gap - a.gap;
-            return b.score - a.score;
+            return getStrictChronologicalIssueScore(b) - getStrictChronologicalIssueScore(a);
         })
         .map(info => info.dateStr);
 
@@ -2012,8 +2048,8 @@ const getCriticalChronologicalPriorityDates = (rows, pool, maxDates = 8) => {
 
 const getMonthlyBalanceSweepPlan = (rows, pool, monthsAhead = 5) => {
     const allDates = getChronologicalBalanceDates(rows);
-    const start = new Date((viewDate || new Date().toISOString().split('T')[0]) + 'T00:00:00');
-    const firstMonth = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+    const start = getBalanceRuleStartDate();
+    const firstMonth = new Date(start.getFullYear(), start.getMonth(), 1);
     const horizon = new Date(start.getFullYear(), start.getMonth() + monthsAhead, 31);
     const byMonth = {};
 
@@ -2033,10 +2069,7 @@ const getMonthlyBalanceSweepPlan = (rows, pool, monthsAhead = 5) => {
     const impossibleMonths = [];
 
     Object.keys(byMonth).sort().forEach(monthKey => {
-        const monthInfos = byMonth[monthKey].sort((a, b) => {
-            if (b.gap !== a.gap) return b.gap - a.gap;
-            return b.score - a.score;
-        });
+        const monthInfos = byMonth[monthKey].sort((a, b) => getStrictChronologicalIssueScore(b) - getStrictChronologicalIssueScore(a));
 
         const worst = monthInfos[0];
         if (!worst) return;
@@ -2068,6 +2101,20 @@ const getMonthlyBalanceSweepPlan = (rows, pool, monthsAhead = 5) => {
     };
 };
 
+const getStrictChronologicalIssuesForRows = (rows, pool = null, datesOverride = null) => {
+    const dates = datesOverride || getChronologicalBalanceDates(rows);
+    return dates
+        .map(dateStr => ({ dateStr, ...getChronologicalDateScore(rows, dateStr, pool) }))
+        .filter(info => hasChronologicalBalanceIssue(info))
+        .sort((a, b) => {
+            const strictDiff = getStrictChronologicalIssueScore(b) - getStrictChronologicalIssueScore(a);
+            if (strictDiff !== 0) return strictDiff;
+            if ((b.belowMinTotal || 0) !== (a.belowMinTotal || 0)) return (b.belowMinTotal || 0) - (a.belowMinTotal || 0);
+            if ((b.gap || 0) !== (a.gap || 0)) return (b.gap || 0) - (a.gap || 0);
+            return a.dateStr.localeCompare(b.dateStr);
+        });
+};
+
 const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(), instructorPoolOverride = null, options = {}) => {
     let newRows = (sourceRows || []).map(row => ({
         ...row,
@@ -2078,7 +2125,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
     const balanceDates = getChronologicalBalanceDates(newRows);
     const pool = instructorPoolOverride || uniqueInstrutores;
     const priorityDateStr = (options.priorityDateStr && options.priorityDateStr.length === 10)
-        ? options.priorityDateStr
+        ? clampToBalanceRuleStart(options.priorityDateStr)
         : '';
     const priorityDateList = [
         ...(priorityDateStr ? [priorityDateStr] : []),
@@ -2271,10 +2318,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
             const orderedPriorityDates = priorityDateList
                 .map(dateStr => ({ dateStr, ...getChronologicalDateScore(newRows, dateStr, pool) }))
                 .filter(info => hasChronologicalBalanceIssue(info))
-                .sort((a, b) => {
-                    if (b.gap !== a.gap) return b.gap - a.gap;
-                    return b.score - a.score;
-                })
+                .sort((a, b) => getStrictChronologicalIssueScore(b) - getStrictChronologicalIssueScore(a))
                 .map(info => info.dateStr);
 
             orderedPriorityDates.forEach(repairPriorityDate);
@@ -2285,15 +2329,12 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
     repairPriorityDates(1);
 
     for (let iter = 0; iter < (options.maxRepairMoves || 35); iter++) {
-        const remaining = balanceDates
-            .map(dateStr => ({ dateStr, ...getChronologicalDateScore(newRows, dateStr, pool) }))
-            .filter(info => hasChronologicalBalanceIssue(info))
+        const remaining = getStrictChronologicalIssuesForRows(newRows, pool, balanceDates)
             .sort((a, b) => {
                 const aPriority = priorityDateList.includes(a.dateStr) ? 1 : 0;
                 const bPriority = priorityDateList.includes(b.dateStr) ? 1 : 0;
                 if (aPriority !== bPriority) return bPriority - aPriority;
-                if (b.gap !== a.gap) return b.gap - a.gap;
-                return b.score - a.score;
+                return getStrictChronologicalIssueScore(b) - getStrictChronologicalIssueScore(a);
             });
 
         if (remaining.length === 0) break;
@@ -2319,9 +2360,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
 
     repairPriorityDates(options.priorityRepairCycles || 3);
 
-    const remainingIssues = balanceDates
-        .map(dateStr => ({ dateStr, ...getChronologicalDateScore(newRows, dateStr, pool) }))
-        .filter(info => hasChronologicalBalanceIssue(info));
+    const remainingIssues = getStrictChronologicalIssuesForRows(newRows, pool, balanceDates);
 
     return { rows: newRows, moves, remainingIssues };
 };
@@ -2332,10 +2371,10 @@ const rebalanceWorkload = () => {
         return;
     }
 
-    const initialIssues = getBalanceIssues(data);
+    const initialIssues = getStrictChronologicalIssuesForRows(data);
 
     if (initialIssues.length === 0) {
-        showNotify("Nenhuma discrepância relevante encontrada nos meses futuros.", "success");
+        showNotify(`Nenhuma discrepância encontrada desde ${formatDatePTBR(BALANCE_LIMITS.enforceFrom)}.`, "success");
         return;
     }
 
@@ -2344,10 +2383,11 @@ const rebalanceWorkload = () => {
     const lastRunText = lastRun ? new Date(lastRun).toLocaleString('pt-BR') : '';
     const ok = window.confirm(
         (lastRun ? `Atenção: já existe uma distribuição automática feita em ${lastRunText}.\nDeseja realmente recalcular uma nova distribuição geral?\n\n` : '') +
-        `Foram encontradas ${initialIssues.length} discrepância(s) futuras.\n\n` +
-        `Maior alerta: ${top.max.nome} com ${top.max.totalAlunos} alunos em ${formatDatePTBR(top.dateStr)}.\n` +
-        `Menor carga: ${top.min.nome} com ${top.min.totalAlunos} alunos.\n\n` +
-        `Meta do período: mínimo ${BALANCE_LIMITS.min} alunos quando possível e diferença máxima de ${BALANCE_LIMITS.maxGap} alunos entre maior e menor carga.\n\n` +
+        `Foram encontradas ${initialIssues.length} discrepância(s) desde ${formatDatePTBR(BALANCE_LIMITS.enforceFrom)}.\n\n` +
+        `Maior alerta: ${top.top.nome} com ${top.top.totalAlunos} alunos em ${formatDatePTBR(top.dateStr)}.\n` +
+        `Menor carga: ${top.bottom.nome} com ${top.bottom.totalAlunos} alunos.\n` +
+        `Gap atual: ${top.gap} aluno(s). Abaixo de 200: ${top.belowMinCount || 0} instrutor(es).\n\n` +
+        `Meta obrigatória: nenhum instrutor abaixo de ${BALANCE_LIMITS.min} alunos e diferença máxima de ${BALANCE_LIMITS.maxGap} alunos entre maior e menor carga.\n\n` +
         `Deseja aplicar o rebalanceamento inteligente no sistema todo agora?`
     );
 
@@ -2355,16 +2395,18 @@ const rebalanceWorkload = () => {
 
     const balanceResult = executeChronologicalAutoBalance(data, new Set(), null, {
         priorityDateStr: viewDate,
+        priorityDateList: initialIssues.slice(0, 12).map(issue => issue.dateStr),
+        maxPriorityDates: 12,
         protectPriorityDate: false,
         allowActiveRoleMoves: true,
         allowPreservedCurrentMoves: true,
-        maxChronologicalIterations: 120,
-        maxRepairIssues: 18,
-        maxRepairMoves: 180,
-        priorityRepairMoves: 80,
-        priorityRepairCycles: 6,
-        maxDonors: 8,
-        priorityMaxDonors: 10
+        maxChronologicalIterations: 180,
+        maxRepairIssues: 28,
+        maxRepairMoves: 260,
+        priorityRepairMoves: 120,
+        priorityRepairCycles: 8,
+        maxDonors: 10,
+        priorityMaxDonors: 12
     });
     const newRows = balanceResult.rows;
     const moves = balanceResult.moves;
@@ -2381,7 +2423,7 @@ const rebalanceWorkload = () => {
         timestamp: new Date().toISOString(),
         type: "Rebalanceamento IA",
         classId: "Sistema",
-        before: `${initialIssues.length} discrepância(s) futuras encontradas.`,
+        before: `${initialIssues.length} discrepância(s) encontradas desde ${formatDatePTBR(BALANCE_LIMITS.enforceFrom)}.`,
         after: `${moves.length} ajuste(s) aplicado(s). Restaram ${remainingIssues.length} alerta(s).`
     };
 
@@ -2622,7 +2664,7 @@ const handleBlockInstructor = (instructorName) => {
         after: `Bloqueado. ${changes.length} posição(ões) redistribuída(s). ${redistribution.balanceMoves.length} ajuste(s) cronológico(s). ${unresolved.length} sem substituto. Meta: diferença máxima de ${BALANCE_LIMITS.maxGap} alunos por mês quando matematicamente possível.`
     };
 
-    persist(newRows, substitutions, [logEntry, ...logs], nextBlocked);
+    persist(newRows, substitutions, [logEntry, ...logs], nextBlocked, nextExtraInstructors);
     setSelectedInstructorDetail(null);
 
     if (unresolved.length > 0) {
@@ -2791,10 +2833,10 @@ useEffect(() => {
             };
 
             const getRoleDateForAutoDistribution = (row, role) => {
-                if (role === 'instrutor1') return safeString(row.inicio).length === 10 ? row.inicio : viewDate;
-                if (role === 'instrutor2') return safeString(row.dataTransferencia).length === 10 ? row.dataTransferencia : '';
-                if (role === 'instrutor3') return safeString(row.dataTransferencia2).length === 10 ? row.dataTransferencia2 : '';
-                return viewDate;
+                if (role === 'instrutor1') return clampToBalanceRuleStart(safeString(row.inicio).length === 10 ? row.inicio : viewDate);
+                if (role === 'instrutor2') return safeString(row.dataTransferencia).length === 10 ? clampToBalanceRuleStart(row.dataTransferencia) : '';
+                if (role === 'instrutor3') return safeString(row.dataTransferencia2).length === 10 ? clampToBalanceRuleStart(row.dataTransferencia2) : '';
+                return clampToBalanceRuleStart(viewDate);
             };
 
             const autoDistributeImportedBackup = (rawRows, instructorPool, analystPool, preserveCurrentInstructor = false) => {
@@ -3108,6 +3150,7 @@ useEffect(() => {
                             let newLogsDB = [...logs];
                             let cleanImportLog = null;
                             let cleanImportSummary = null;
+                            let importedExtraInstructors = null;
 
                             if (wb.SheetNames.includes("Turmas_DB")) { 
                                 const ws = wb.Sheets["Turmas_DB"]; 
@@ -3141,7 +3184,7 @@ useEffect(() => {
                                         `Detectei um backup com Instrutor 1, 2 e 3 em branco, mas com Instrutor Atual preenchido.\n\n` +
                                         `Deseja fazer a DISTRIBUIÇÃO LIMPA DO ZERO agora?\n\n` +
                                         `O sistema irá preservar início, término e passagens, manter o Instrutor Atual no papel ativo da turma e calcular automaticamente as passagens futuras/recebimentos.\n\n` +
-                                        `Regra de equilíbrio: diferença máxima de ${BALANCE_LIMITS.maxGap} alunos entre o instrutor com maior e menor carga em cada mês, quando houver turmas suficientes para isso. Luciano e Claire ficam bloqueados e não recebem novas turmas.`
+                                        `Regra de equilíbrio desde ${formatDatePTBR(BALANCE_LIMITS.enforceFrom)}: nenhum instrutor abaixo de ${BALANCE_LIMITS.min} alunos e diferença máxima de ${BALANCE_LIMITS.maxGap} alunos entre o instrutor com maior e menor carga. Luciano e Claire ficam bloqueados e não recebem novas turmas.`
                                     );
 
                                     if (runCleanDistribution) {
@@ -3149,32 +3192,36 @@ useEffect(() => {
                                         const combinedInsts = [...new Set([...uniqueInstrutores, ...extraInstructors, ...currentNames].map(safeString).filter(Boolean))]
                                             .filter(nome => !isBlockedInstructorName(nome));
                                         const nextExtraInstructors = [...new Set([...extraInstructors, ...combinedInsts].map(safeString).filter(Boolean))];
+                                        importedExtraInstructors = nextExtraInstructors;
                                         setExtraInstructors(nextExtraInstructors);
                                         localStorage.setItem(EXTRA_INSTRUCTORS_KEY, JSON.stringify(nextExtraInstructors));
 
                                         const distributionResult = autoDistributeImportedBackup(newDB, combinedInsts, uniqueAnalistas, true);
-                                        const importPriorityStart = new Date((viewDate || new Date().toISOString().split('T')[0]) + 'T00:00:00');
-                                        importPriorityStart.setMonth(importPriorityStart.getMonth() + 1, 1);
-                                        const importPriorityHorizon = new Date((viewDate || new Date().toISOString().split('T')[0]) + 'T00:00:00');
-                                        importPriorityHorizon.setMonth(importPriorityHorizon.getMonth() + 5);
+                                        const importPriorityStart = getBalanceRuleStartDate();
+                                        const importPriorityHorizon = new Date(importPriorityStart);
+                                        importPriorityHorizon.setMonth(importPriorityHorizon.getMonth() + 18);
                                         const importPriorityDates = getCriticalChronologicalPriorityDates(distributionResult.rows, combinedInsts, 14)
                                             .filter(dateStr => {
                                                 const dateObj = new Date(dateStr + 'T00:00:00');
                                                 return dateObj >= importPriorityStart && dateObj <= importPriorityHorizon;
                                             })
                                             .slice(0, 10);
-                                        const balanceResult = executeChronologicalAutoBalance(distributionResult.rows, distributionResult.lockedMoveKeys, combinedInsts, {
+                                        const balanceResult = executeChronologicalAutoBalance(distributionResult.rows, new Set(), combinedInsts, {
                                             priorityDateList: importPriorityDates,
                                             maxPriorityDates: 10,
-                                            priorityRepairMoves: 8,
-                                            priorityRepairCycles: 1,
-                                            priorityMaxDonors: 8,
+                                            priorityRepairMoves: 90,
+                                            priorityRepairCycles: 6,
+                                            priorityMaxDonors: 12,
                                             protectPriorityDate: false,
-                                            maxRepairIssues: 5,
-                                            maxRepairMoves: 8
+                                            allowActiveRoleMoves: true,
+                                            allowPreservedCurrentMoves: true,
+                                            maxChronologicalIterations: 140,
+                                            maxRepairIssues: 20,
+                                            maxRepairMoves: 180,
+                                            maxDonors: 10
                                         });
 
-                                        const monthlyAudit = getMonthlyBalanceSweepPlan(balanceResult.rows, combinedInsts, 5);
+                                        const monthlyAudit = getMonthlyBalanceSweepPlan(balanceResult.rows, combinedInsts, 18);
                                         const pendingPossibleMonthText = [...new Set(monthlyAudit.priorityDates.map(dateStr => getMonthName(dateStr.slice(0, 7))))]
                                             .join(', ');
                                         const impossibleMonthText = monthlyAudit.impossibleMonths
@@ -3203,7 +3250,7 @@ useEffect(() => {
                                             type: "Importação Limpa",
                                             classId: "Backup",
                                             before: `${newDB.length} turma(s) importada(s) com instrutores em branco.`,
-                                            after: `${distributionResult.summary.length} ação(ões) sinalizada(s), ${balanceResult.moves.length} ajuste(s) cronológico(s), preservando instrutor atual e calculando passagens futuras por período integral. Varredura mensal priorizada: ${importPriorityDates.map(formatDatePTBR).join(', ') || 'nenhuma'}. Meses ainda acima da meta com média possível: ${pendingPossibleMonthText || 'nenhum no horizonte'}. Meses abaixo de 200 por média: ${impossibleMonthText || 'nenhum no horizonte'}. Restaram ${balanceResult.remainingIssues.length} alerta(s) para validação.`
+                                            after: `${distributionResult.summary.length} ação(ões) sinalizada(s), ${balanceResult.moves.length} ajuste(s) cronológico(s), aplicando regra obrigatória desde ${formatDatePTBR(BALANCE_LIMITS.enforceFrom)}. Varredura mensal priorizada: ${importPriorityDates.map(formatDatePTBR).join(', ') || 'nenhuma'}. Meses ainda acima da meta: ${pendingPossibleMonthText || 'nenhum no horizonte'}. Meses sem volume total para 200 por instrutor: ${impossibleMonthText || 'nenhum no horizonte'}. Restaram ${balanceResult.remainingIssues.length} alerta(s) para validação.`
                                         };
 
                                         if (distributionResult.summary.length > 0 || balanceSummary.length > 0) {
@@ -3226,7 +3273,7 @@ useEffect(() => {
                                 newLogsDB = [cleanImportLog, ...newLogsDB];
                             }
                             
-                            persist(newDB, newSubsDB, newLogsDB);
+                            persist(newDB, newSubsDB, newLogsDB, blockedInstructors, importedExtraInstructors);
                             if (cleanImportSummary) {
                                 setImportSummaryModal(cleanImportSummary);
                             }
@@ -3878,7 +3925,7 @@ useEffect(() => {
                                     <button
     onClick={rebalanceWorkload}
     className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"
-    title={`Reorganiza turmas atuais e futuras para manter no mínimo ${BALANCE_LIMITS.min} alunos e diferença máxima de ${BALANCE_LIMITS.maxGap} alunos`}
+    title={`Reorganiza turmas desde ${formatDatePTBR(BALANCE_LIMITS.enforceFrom)} para manter no mínimo ${BALANCE_LIMITS.min} alunos e diferença máxima de ${BALANCE_LIMITS.maxGap} alunos`}
 >
     <Icons.Robot /> Equilibrar Turmas
 </button>
