@@ -1044,6 +1044,7 @@ const BALANCE_LIMITS = {
     max: 270,
     hardMax: 280,
     maxGap: 40,
+    maxSameCourse: 2,
     maxTurmasGap: 2, 
     monthsAhead: 6, 
     maxMoves: 1500 // <--- AUMENTADO: Fôlego para processar até o final do ano
@@ -1698,7 +1699,7 @@ const getChronologicalDateScore = (rows, dateStr, instructorPoolOverride = null)
     const snapshot = getChronologicalSnapshot(rows, dateStr, instructorPoolOverride);
 
     if (snapshot.length < 2) {
-        return { score: 0, gap: 0, top: null, bottom: null, snapshot };
+        return { score: 0, gap: 0, gapOverflow: 0, belowMinTotal: 0, belowMinCount: 0, top: null, bottom: null, snapshot, minPossible: false };
     }
 
     const top = snapshot[0];
@@ -1707,10 +1708,18 @@ const getChronologicalDateScore = (rows, dateStr, instructorPoolOverride = null)
     const totalAlunos = snapshot.reduce((acc, inst) => acc + inst.totalAlunos, 0);
     const avg = totalAlunos / snapshot.length;
     const minPossible = totalAlunos >= (BALANCE_LIMITS.min * snapshot.length);
+    const gapOverflow = Math.max(0, gap - BALANCE_LIMITS.maxGap);
+    const topOverflow = Math.max(0, top.totalAlunos - BALANCE_LIMITS.max);
+    const belowMinTotal = minPossible
+        ? snapshot.reduce((acc, inst) => acc + Math.max(0, BALANCE_LIMITS.min - inst.totalAlunos), 0)
+        : 0;
+    const belowMinCount = minPossible
+        ? snapshot.filter(inst => inst.totalAlunos < BALANCE_LIMITS.min).length
+        : 0;
 
     let score = 0;
-    score += Math.max(0, gap - BALANCE_LIMITS.maxGap) * Math.max(0, gap - BALANCE_LIMITS.maxGap) * 10000;
-    score += Math.max(0, top.totalAlunos - BALANCE_LIMITS.max) * Math.max(0, top.totalAlunos - BALANCE_LIMITS.max) * 3000;
+    score += gapOverflow * gapOverflow * 10000;
+    score += topOverflow * topOverflow * 3000;
     score += snapshot.reduce((acc, inst) => acc + (Math.abs(inst.totalAlunos - avg) * 12), 0);
 
     if (minPossible) {
@@ -1720,7 +1729,25 @@ const getChronologicalDateScore = (rows, dateStr, instructorPoolOverride = null)
         }, 0);
     }
 
-    return { score, gap, top, bottom, snapshot, avg, minPossible };
+    return { score, gap, gapOverflow, topOverflow, belowMinTotal, belowMinCount, top, bottom, snapshot, avg, minPossible };
+};
+
+const hasChronologicalBalanceIssue = (info) => {
+    if (!info || !info.top) return false;
+    return (info.gapOverflow || Math.max(0, info.gap - BALANCE_LIMITS.maxGap)) > 0
+        || (info.minPossible && (info.belowMinTotal || 0) > 0);
+};
+
+const getStrictChronologicalIssueScore = (info) => {
+    if (!info || !info.top) return 0;
+    const gapOverflow = info.gapOverflow || Math.max(0, (info.gap || 0) - BALANCE_LIMITS.maxGap);
+    const belowMinTotal = info.minPossible ? (info.belowMinTotal || 0) : 0;
+    const belowMinCount = info.minPossible ? (info.belowMinCount || 0) : 0;
+
+    return (gapOverflow * gapOverflow * 1000000)
+        + (belowMinTotal * belowMinTotal * 120000)
+        + (belowMinCount * 600000)
+        + (info.score || 0);
 };
 
 const getOperationalBalanceDateStr = () => {
@@ -1734,7 +1761,7 @@ const isRoleProtectedByCurrentInstructor = (row, role) => {
     return active && active.role === role && safeString(row[role]);
 };
 
-const canMoveRoleForBalance = (row, role, key, lockedMoveKeys = new Set()) => {
+const canMoveRoleForBalance = (row, role, key, lockedMoveKeys = new Set(), options = {}) => {
     if (!safeString(row[role])) return false;
     if (lockedMoveKeys.has(key)) return false;
 
@@ -1742,11 +1769,11 @@ const canMoveRoleForBalance = (row, role, key, lockedMoveKeys = new Set()) => {
         ? row.autoAssignedLogs[role]
         : null;
 
-    if (log && typeof log === 'object' && log.type === 'preserved-current') return false;
+    if (log && typeof log === 'object' && log.type === 'preserved-current' && !options.allowPreservedCurrentMoves) return false;
 
     // Mantém o instrutor que está ativo hoje. O equilíbrio pode mexer nas
     // passagens futuras e nas turmas agendadas, inclusive se vieram manuais.
-    return !isRoleProtectedByCurrentInstructor(row, role);
+    return options.allowActiveRoleMoves === true || !isRoleProtectedByCurrentInstructor(row, role);
 };
 
 const getGlobalChronologicalBalanceScore = (rows, balanceDates, pool) => {
@@ -1756,7 +1783,7 @@ const getGlobalChronologicalBalanceScore = (rows, balanceDates, pool) => {
     }));
 
     const issues = dateInfos
-        .filter(info => info.top && info.gap > BALANCE_LIMITS.maxGap)
+        .filter(info => hasChronologicalBalanceIssue(info))
         .sort((a, b) => {
             if (b.gap !== a.gap) return b.gap - a.gap;
             return b.score - a.score;
@@ -1803,11 +1830,11 @@ const getFocusedChronologicalScore = (rows, dates, pool) => {
     }, 0);
 };
 
-const findFocusedChronologicalRepairMove = (rows, issues, balanceDates, pool, lockedMoveKeys, moveHistory, priorityDateStr = '', maxIssues = 24, protectPriorityDate = true, maxDonors = 4, protectedDateList = [], allowTemporaryImpact = false) => {
+const findFocusedChronologicalRepairMove = (rows, issues, balanceDates, pool, lockedMoveKeys, moveHistory, priorityDateStr = '', maxIssues = 24, protectPriorityDate = true, maxDonors = 4, protectedDateList = [], allowTemporaryImpact = false, moveOptions = {}) => {
     let bestMove = null;
 
     issues.slice(0, maxIssues).forEach(issue => {
-        if (!issue.top || issue.gap <= BALANCE_LIMITS.maxGap) return;
+        if (!hasChronologicalBalanceIssue(issue)) return;
 
         const bottomLoad = issue.bottom ? issue.bottom.totalAlunos : issue.snapshot[issue.snapshot.length - 1].totalAlunos;
         const donors = [...issue.snapshot]
@@ -1828,7 +1855,7 @@ const findFocusedChronologicalRepairMove = (rows, issues, balanceDates, pool, lo
                     if (!active || normalizeText(active.inst) !== donorNorm) return null;
 
                     const key = `${safeString(row.id) || index}|${active.role}`;
-                    if (!canMoveRoleForBalance(row, active.role, key, lockedMoveKeys)) return null;
+                    if (!canMoveRoleForBalance(row, active.role, key, lockedMoveKeys, moveOptions)) return null;
 
                     return {
                         row,
@@ -1889,16 +1916,16 @@ const findFocusedChronologicalRepairMove = (rows, issues, balanceDates, pool, lo
                         const priorityBefore = getChronologicalDateScore(rows, priorityDateStr, pool);
                         const priorityAfter = getChronologicalDateScore(simulatedRows, priorityDateStr, pool);
                         if (priorityAfter.gap > priorityBefore.gap) return;
-                        if (priorityBefore.gap <= BALANCE_LIMITS.maxGap && priorityAfter.gap > BALANCE_LIMITS.maxGap) return;
+                        if (!hasChronologicalBalanceIssue(priorityBefore) && hasChronologicalBalanceIssue(priorityAfter)) return;
                     }
 
                     const protectedImpactBad = (protectedDateList || [])
                         .filter(protectedDate => protectedDate !== issue.dateStr && affectedDates.includes(protectedDate))
                         .some(protectedDate => {
                             const beforeProtected = getChronologicalDateScore(rows, protectedDate, pool);
-                            if (!beforeProtected.top || beforeProtected.gap > BALANCE_LIMITS.maxGap) return false;
+                            if (!beforeProtected.top || hasChronologicalBalanceIssue(beforeProtected)) return false;
                             const afterProtected = getChronologicalDateScore(simulatedRows, protectedDate, pool);
-                            return afterProtected.gap > beforeProtected.gap || afterProtected.gap > BALANCE_LIMITS.maxGap;
+                            return afterProtected.gap > beforeProtected.gap || hasChronologicalBalanceIssue(afterProtected);
                         });
 
                     if (protectedImpactBad) return;
@@ -1913,6 +1940,8 @@ const findFocusedChronologicalRepairMove = (rows, issues, balanceDates, pool, lo
                     let score = 0;
                     score += afterIssue.gap * 120000;
                     score += Math.max(0, afterIssue.gap - BALANCE_LIMITS.maxGap) * Math.max(0, afterIssue.gap - BALANCE_LIMITS.maxGap) * 8000;
+                    score += (afterIssue.belowMinTotal || 0) * 500000;
+                    score += (afterIssue.belowMinCount || 0) * 250000;
                     score += afterFocused - beforeFocused;
                     score += sameCourseAfter * 800;
                     if (sameCourseAfter > BALANCE_LIMITS.maxSameCourse) score += (sameCourseAfter - BALANCE_LIMITS.maxSameCourse) * 9000;
@@ -1947,7 +1976,7 @@ const getCriticalChronologicalPriorityDates = (rows, pool, maxDates = 8) => {
     const dates = getChronologicalBalanceDates(rows);
     const issueInfos = dates
         .map(dateStr => ({ dateStr, ...getChronologicalDateScore(rows, dateStr, pool) }))
-        .filter(info => info.top && info.gap > BALANCE_LIMITS.maxGap);
+        .filter(info => hasChronologicalBalanceIssue(info));
 
     const dayNinePriorities = issueInfos
         .filter(info => info.dateStr.endsWith('-09'))
@@ -2025,9 +2054,9 @@ const getMonthlyBalanceSweepPlan = (rows, pool, monthsAhead = 5) => {
             return;
         }
 
-        if (worst.gap <= BALANCE_LIMITS.maxGap) return;
+        if (!hasChronologicalBalanceIssue(worst)) return;
 
-        const dayNine = monthInfos.find(info => info.dateStr.endsWith('-09') && info.gap > BALANCE_LIMITS.maxGap);
+        const dayNine = monthInfos.find(info => info.dateStr.endsWith('-09') && hasChronologicalBalanceIssue(info));
         [dayNine, worst].filter(Boolean).forEach(info => {
             if (!priorityDates.includes(info.dateStr)) priorityDates.push(info.dateStr);
         });
@@ -2060,13 +2089,18 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
         .slice(0, options.maxPriorityDates || 8);
     const lockedPreviousGaps = {};
     const moves = [];
+    const moveOptions = {
+        allowActiveRoleMoves: options.allowActiveRoleMoves === true,
+        allowPreservedCurrentMoves: options.allowPreservedCurrentMoves === true
+    };
 
     const chronologicalIterations = options.skipChronologicalPass ? 0 : (options.maxChronologicalIterations || 40);
 
     balanceDates.forEach((dateStr, dateIndex) => {
         for (let iter = 0; iter < chronologicalIterations; iter++) {
             const current = getChronologicalDateScore(newRows, dateStr, pool);
-            if (!current.top || current.gap <= BALANCE_LIMITS.maxGap) break;
+            if (!hasChronologicalBalanceIssue(current)) break;
+            const currentStrictScore = getStrictChronologicalIssueScore(current);
 
             const lowTargets = [...current.snapshot]
                 .sort((a, b) => a.totalAlunos - b.totalAlunos)
@@ -2078,7 +2112,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                     if (!active || normalizeText(active.inst) !== normalizeText(current.top.nome)) return null;
 
                     const key = `${safeString(row.id) || index}|${active.role}`;
-                    if (!canMoveRoleForBalance(row, active.role, key, lockedMoveKeys)) return null;
+                    if (!canMoveRoleForBalance(row, active.role, key, lockedMoveKeys, moveOptions)) return null;
 
                     return {
                         row,
@@ -2121,12 +2155,17 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                     if (getDuplicateInstructorInClass(simulatedRows[item.index])) return;
 
                     const after = getChronologicalDateScore(simulatedRows, dateStr, pool);
-                    if (after.score >= current.score && after.gap >= current.gap) return;
+                    const afterStrictScore = getStrictChronologicalIssueScore(after);
+                    if (afterStrictScore >= currentStrictScore && after.score >= current.score && after.gap >= current.gap) return;
 
                     const previousDatesOk = balanceDates.slice(0, dateIndex).every(previousDate => {
                         if (lockedPreviousGaps[previousDate] === undefined) return true;
                         const allowedPreviousGap = Math.max(BALANCE_LIMITS.maxGap, lockedPreviousGaps[previousDate] + 5);
-                        return getChronologicalDateScore(simulatedRows, previousDate, pool).gap <= allowedPreviousGap;
+                        const beforePrevious = getChronologicalDateScore(newRows, previousDate, pool);
+                        const afterPrevious = getChronologicalDateScore(simulatedRows, previousDate, pool);
+                        if (afterPrevious.gap > allowedPreviousGap) return false;
+                        if (!hasChronologicalBalanceIssue(beforePrevious) && hasChronologicalBalanceIssue(afterPrevious)) return false;
+                        return getStrictChronologicalIssueScore(afterPrevious) <= getStrictChronologicalIssueScore(beforePrevious) + 1000;
                     });
 
                     if (!previousDatesOk) return;
@@ -2138,13 +2177,15 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                         to: target.nome,
                         dateStr,
                         afterGap: after.gap,
+                        afterIssueScore: afterStrictScore,
                         improvement
                     };
 
                     if (
                         !bestMove ||
-                        move.afterGap < bestMove.afterGap ||
-                        (move.afterGap === bestMove.afterGap && move.improvement > bestMove.improvement)
+                        move.afterIssueScore < bestMove.afterIssueScore ||
+                        (move.afterIssueScore === bestMove.afterIssueScore && move.afterGap < bestMove.afterGap) ||
+                        (move.afterIssueScore === bestMove.afterIssueScore && move.afterGap === bestMove.afterGap && move.improvement > bestMove.improvement)
                     ) {
                         bestMove = move;
                     }
@@ -2200,7 +2241,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
 
         for (let iter = 0; iter < (options.priorityRepairMoves || 28); iter++) {
             const priorityInfo = { dateStr, ...getChronologicalDateScore(newRows, dateStr, pool) };
-            if (!priorityInfo.top || priorityInfo.gap <= BALANCE_LIMITS.maxGap) break;
+            if (!hasChronologicalBalanceIssue(priorityInfo)) break;
 
             const priorityMove = findFocusedChronologicalRepairMove(
                 newRows,
@@ -2214,7 +2255,8 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                 true,
                 options.priorityMaxDonors || 8,
                 [],
-                true
+                true,
+                moveOptions
             );
 
             if (!priorityMove) break;
@@ -2228,7 +2270,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
             const beforeMoveCount = moves.length;
             const orderedPriorityDates = priorityDateList
                 .map(dateStr => ({ dateStr, ...getChronologicalDateScore(newRows, dateStr, pool) }))
-                .filter(info => info.top && info.gap > BALANCE_LIMITS.maxGap)
+                .filter(info => hasChronologicalBalanceIssue(info))
                 .sort((a, b) => {
                     if (b.gap !== a.gap) return b.gap - a.gap;
                     return b.score - a.score;
@@ -2245,7 +2287,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
     for (let iter = 0; iter < (options.maxRepairMoves || 35); iter++) {
         const remaining = balanceDates
             .map(dateStr => ({ dateStr, ...getChronologicalDateScore(newRows, dateStr, pool) }))
-            .filter(info => info.top && info.gap > BALANCE_LIMITS.maxGap)
+            .filter(info => hasChronologicalBalanceIssue(info))
             .sort((a, b) => {
                 const aPriority = priorityDateList.includes(a.dateStr) ? 1 : 0;
                 const bPriority = priorityDateList.includes(b.dateStr) ? 1 : 0;
@@ -2267,7 +2309,9 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
             options.maxRepairIssues || 8,
             options.protectPriorityDate !== false,
             options.maxDonors || 4,
-            options.protectPriorityDate === false ? [] : priorityDateList
+            options.protectPriorityDate === false ? [] : priorityDateList,
+            false,
+            moveOptions
         );
         if (!bestMove) break;
         applyRepairMove(bestMove);
@@ -2277,7 +2321,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
 
     const remainingIssues = balanceDates
         .map(dateStr => ({ dateStr, ...getChronologicalDateScore(newRows, dateStr, pool) }))
-        .filter(info => info.top && info.gap > BALANCE_LIMITS.maxGap);
+        .filter(info => hasChronologicalBalanceIssue(info));
 
     return { rows: newRows, moves, remainingIssues };
 };
@@ -2312,8 +2356,15 @@ const rebalanceWorkload = () => {
     const balanceResult = executeChronologicalAutoBalance(data, new Set(), null, {
         priorityDateStr: viewDate,
         protectPriorityDate: false,
-        maxRepairIssues: 10,
-        maxRepairMoves: 25
+        allowActiveRoleMoves: true,
+        allowPreservedCurrentMoves: true,
+        maxChronologicalIterations: 120,
+        maxRepairIssues: 18,
+        maxRepairMoves: 180,
+        priorityRepairMoves: 80,
+        priorityRepairCycles: 6,
+        maxDonors: 8,
+        priorityMaxDonors: 10
     });
     const newRows = balanceResult.rows;
     const moves = balanceResult.moves;
@@ -2937,6 +2988,8 @@ useEffect(() => {
                 Object.values(stats).forEach(st => { 
                     if (blockedInstructors.includes(normalizeText(st.nome))) {
                         st.alerts.push({ msg: `🚫 Bloqueado para novas turmas`, type: 'red' });
+                    } else if (st.totalTurmas > 0 && st.totalAlunos < BALANCE_LIMITS.min) {
+                        st.alerts.push({ msg: `Abaixo do mínimo: ${st.totalAlunos} alunos`, type: 'red' });
                     } else if (st.totalAlunos >= 300) {
                         st.alerts.push({ msg: `Estouro: ${st.totalAlunos} alunos`, type: 'red' });
                     } else if (st.totalAlunos >= 250) {
@@ -3804,6 +3857,9 @@ useEffect(() => {
             const totalInstrutoresAtivos = dashboardInstructors.length;
             const totalAlunosGeral = dashboardInstructors.reduce((acc, inst) => acc + inst.totalAlunos, 0);
             const mediaAlunosPorInstrutor = totalInstrutoresAtivos > 0 ? Math.round(totalAlunosGeral / totalInstrutoresAtivos) : 0;
+            const maxAlunosInstrutor = totalInstrutoresAtivos > 0 ? Math.max(...dashboardInstructors.map(inst => inst.totalAlunos)) : 0;
+            const minAlunosInstrutor = totalInstrutoresAtivos > 0 ? Math.min(...dashboardInstructors.map(inst => inst.totalAlunos)) : 0;
+            const gapAlunosInstrutores = totalInstrutoresAtivos > 1 ? maxAlunosInstrutor - minAlunosInstrutor : 0;
 
             // === O DESENHO DO SISTEMA COMEÇA AQUI ===
             return (
@@ -3822,7 +3878,7 @@ useEffect(() => {
                                     <button
     onClick={rebalanceWorkload}
     className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"
-    title={`Reorganiza turmas atuais e futuras para manter diferença máxima de ${BALANCE_LIMITS.maxGap} alunos por mês quando possível`}
+    title={`Reorganiza turmas atuais e futuras para manter no mínimo ${BALANCE_LIMITS.min} alunos e diferença máxima de ${BALANCE_LIMITS.maxGap} alunos`}
 >
     <Icons.Robot /> Equilibrar Turmas
 </button>
@@ -3879,7 +3935,7 @@ useEffect(() => {
                                             <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-6 flex flex-col justify-center items-center shadow-sm">
                                                 <div className="text-emerald-400 mb-2"><Icons.Check /></div>
                                                 <span className="text-4xl font-black text-emerald-700">{mediaAlunosPorInstrutor}</span>
-                                                <span className="text-xs font-bold text-emerald-600 uppercase tracking-widest mt-1">Média (Alunos/Instrutor)</span>
+                                                <span className="text-xs font-bold text-emerald-600 uppercase tracking-widest mt-1">Média (Alunos/Instrutor) | Gap: {gapAlunosInstrutores}</span>
                                             </div>
                                         </div>
 
@@ -3902,16 +3958,26 @@ useEffect(() => {
                                                         let statusLabel = "Adequada";
                                                         let statusClass = "bg-green-100 text-green-700 border-green-200";
                                                         
-                                                        if (inst.totalAlunos >= 250) { statusLabel = "Máxima (Alerta)"; statusClass = "bg-red-100 text-red-700 border-red-200"; }
-                                                        else if (inst.totalAlunos >= 200) { statusLabel = "Alta"; statusClass = "bg-orange-100 text-orange-700 border-orange-200"; }
-                                                        else if (inst.totalAlunos < 100) { statusLabel = "Baixa (Disponível)"; statusClass = "bg-blue-100 text-blue-700 border-blue-200"; }
+                                                        if (inst.totalAlunos < BALANCE_LIMITS.min) {
+                                                            statusLabel = "Abaixo do mínimo";
+                                                            statusClass = "bg-red-100 text-red-700 border-red-200";
+                                                        } else if (gapAlunosInstrutores > BALANCE_LIMITS.maxGap && inst.totalAlunos === maxAlunosInstrutor) {
+                                                            statusLabel = "Topo acima do gap";
+                                                            statusClass = "bg-red-100 text-red-700 border-red-200";
+                                                        } else if (gapAlunosInstrutores > BALANCE_LIMITS.maxGap && inst.totalAlunos === minAlunosInstrutor) {
+                                                            statusLabel = "Receber alunos";
+                                                            statusClass = "bg-blue-100 text-blue-700 border-blue-200";
+                                                        } else if (inst.totalAlunos >= BALANCE_LIMITS.min + BALANCE_LIMITS.maxGap) {
+                                                            statusLabel = "Alta";
+                                                            statusClass = "bg-orange-100 text-orange-700 border-orange-200";
+                                                        }
 
                                                         return (
                                                             <tr key={inst.nome} className="hover:bg-slate-50 transition">
                                                                 <td className="text-center font-bold text-slate-400">{index + 1}º</td>
                                                                 <td className="font-bold text-slate-700">{inst.nome}</td>
                                                                 <td className="text-center text-slate-600">{inst.totalTurmas}</td>
-                                                                <td className={`text-center font-bold ${inst.totalAlunos >= 200 ? 'text-red-600' : 'text-blue-700'}`}>{inst.totalAlunos}</td>
+                                                                <td className={`text-center font-bold ${inst.totalAlunos < BALANCE_LIMITS.min ? 'text-red-600' : gapAlunosInstrutores > BALANCE_LIMITS.maxGap ? 'text-orange-600' : 'text-green-700'}`}>{inst.totalAlunos}</td>
                                                                 <td className="text-center font-mono text-slate-600">{mediaIndividual}</td>
                                                                 <td className="text-center">
                                                                     <span className={`px-2 py-1 rounded text-[10px] font-bold border ${statusClass}`}>{statusLabel}</span>
