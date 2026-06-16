@@ -1003,13 +1003,12 @@ const handleClearAllData = () => {
             };
 // === IA: REBALANCEAMENTO FUTURO DE INSTRUTORES ===
 const BALANCE_LIMITS = {
-    min: 200,
-    ideal: 235,
+    min: 200,      // O sistema agora tentará segurar isso como piso absoluto
+    ideal: 240,    // Aumentamos o ideal para o sistema não "relaxar" quando chegar em 210
     max: 270,
     hardMax: 280,
     maxGap: 40,
-    maxSameCourse: 3,
-    monthsAhead: 0,
+    monthsAhead: 6, // Aumentei para o sistema olhar mais longe
     maxMoves: 220
 };
 
@@ -1180,41 +1179,14 @@ const getBalanceSnapshot = (rows, dateStr, instructorPoolOverride = null) => {
 const getBalanceTargetsForSnapshot = (snapshot) => {
     const base = snapshot || [];
     const totalAlunos = base.reduce((acc, inst) => acc + inst.totalAlunos, 0);
-    const avg = base.length > 0 ? Math.round(totalAlunos / base.length) : 0;
-    const halfGap = Math.floor(BALANCE_LIMITS.maxGap / 2);
-    const isMinPossible = base.length > 0 ? totalAlunos >= (BALANCE_LIMITS.min * base.length) : true;
+    const avg = base.length > 0 ? Math.round(totalAlunos / base.length) : BALANCE_LIMITS.ideal;
 
-    if (!isMinPossible) {
-        const lowVolumeMin = Math.max(0, avg - halfGap);
-        return {
-            avg,
-            effectiveMin: lowVolumeMin,
-            effectiveIdeal: avg,
-            effectiveMax: lowVolumeMin + BALANCE_LIMITS.maxGap,
-            totalAlunos,
-            isMinPossible
-        };
-    }
-
-    let effectiveMin = Math.max(BALANCE_LIMITS.min, avg - halfGap);
-    let effectiveMax = effectiveMin + BALANCE_LIMITS.maxGap;
-
-    if (avg > effectiveMax) {
-        effectiveMax = avg;
-        effectiveMin = Math.max(avg - BALANCE_LIMITS.maxGap, BALANCE_LIMITS.min);
-    }
-
-    if (effectiveMax > BALANCE_LIMITS.max && avg <= BALANCE_LIMITS.max) {
-        effectiveMax = BALANCE_LIMITS.max;
-        effectiveMin = Math.max(avg - BALANCE_LIMITS.maxGap, Math.min(effectiveMin, effectiveMax));
-    }
-
-    if (avg > BALANCE_LIMITS.max) {
-        effectiveMax = avg;
-        effectiveMin = Math.max(avg - BALANCE_LIMITS.maxGap, BALANCE_LIMITS.min);
-    }
-
-    const effectiveIdeal = avg || BALANCE_LIMITS.ideal;
+    // FORÇA: Se a média estiver abaixo de 200, o sistema entende que precisa subir a barra
+    let effectiveMin = Math.max(BALANCE_LIMITS.min, avg - 20); 
+    let effectiveMax = Math.min(BALANCE_LIMITS.hardMax, effectiveMin + BALANCE_LIMITS.maxGap);
+    
+    // Se o instrutor está abaixo do min, o alvo de "ideal" sobe para forçar a correção
+    let effectiveIdeal = Math.max(BALANCE_LIMITS.ideal, avg);
 
     return {
         avg,
@@ -1222,7 +1194,7 @@ const getBalanceTargetsForSnapshot = (snapshot) => {
         effectiveIdeal,
         effectiveMax,
         totalAlunos,
-        isMinPossible
+        isMinPossible: true 
     };
 };
 
