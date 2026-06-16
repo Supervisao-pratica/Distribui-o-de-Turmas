@@ -487,6 +487,12 @@
 
             // === 4. FUNÇÃO PERSIST DEFINITIVA ===
             const persist = async (newData, newSubs, newLogs, nextBlockedInstructors = null) => {
+                // === FILTRO ANTI-ERRO 400 (FIREBASE) ===
+        // Remove qualquer lixo 'undefined' invisível que a IA tenha gerado
+        if (newData) newData = JSON.parse(JSON.stringify(newData));
+        if (newSubs) newSubs = JSON.parse(JSON.stringify(newSubs));
+        if (newLogs) newLogs = JSON.parse(JSON.stringify(newLogs));
+        // =======================================
                 const blockedToSave = Array.isArray(nextBlockedInstructors) ? nextBlockedInstructors : blockedInstructors;
                 setIsSaving(true);
                 
@@ -1033,14 +1039,14 @@ const handleClearAllData = () => {
 };
 // === IA: REBALANCEAMENTO FUTURO DE INSTRUTORES ===
 const BALANCE_LIMITS = {
-    min: 200,      // O sistema agora tentará segurar isso como piso absoluto
-    ideal: 240,    // Aumentamos o ideal para o sistema não "relaxar" quando chegar em 210
+    min: 200,      
+    ideal: 240,    
     max: 270,
     hardMax: 280,
     maxGap: 40,
-    maxTurmasGap: 2, // NOVO: Diferença máxima de turmas entre os instrutores
+    maxTurmasGap: 2, 
     monthsAhead: 6, 
-    maxMoves: 220
+    maxMoves: 1500 // <--- AUMENTADO: Fôlego para processar até o final do ano
 };
 
 const isBlockedInstructorName = (nome) => {
