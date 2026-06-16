@@ -125,21 +125,24 @@
             import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js")
           ]);
 
-          const { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, onSnapshot } = firestoreModule;
-          const { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } = authModule;
+          
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, getDocs, addDoc } from "firebase/firestore";
+import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
 
-          const firebaseConfig = {
-            apiKey: "AIzaSyAdjsftZXsQ00waKGsLDeY7lDqRgeU_DnM",
-            authDomain: "sgt-senac.firebaseapp.com",
-            projectId: "sgt-senac",
-            storageBucket: "sgt-senac.firebasestorage.app",
-            messagingSenderId: "278613531988",
-            appId: "1:278613531988:web:51af3366f7199c274b3cc1"
-          };
+const firebaseConfig = {
+  apiKey: "AIzaSyAdjsftZXsQ00waKGsLDeY7lDqRgeU_DnM",
+  authDomain: "sgt-senac.firebaseapp.com",
+  projectId: "sgt-senac",
+  storageBucket: "sgt-senac.appspot.com",
+  messagingSenderId: "278613531988",
+  appId: "1:278613531988:web:51af3366f7199c274b3cc1"
+};
 
-          const app = initializeApp(firebaseConfig);
-          const db = getFirestore(app);
-          const auth = getAuth(app);
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
+
 
           window.remoteDB = db;
           window.dbMethods = {
