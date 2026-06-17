@@ -962,8 +962,8 @@ const handleClearAllData = () => {
         if (i2 && stats[i2]) stats[i2].countAsInst2++;
 
         const info = getActiveInfoOnDate(row, targetDateObj);
-        
-        if (info.status === 'Finalizado' || info.status === 'Agendado') return; 
+// O '!info' impede o sistema de crashar caso alguma turma nova não tenha dados suficientes para gerar o status
+if (!info || info.status === 'Finalizado' || info.status === 'Agendado') return; 
 
         const activeInst = info.inst;
         if (activeInst && stats[activeInst]) {
@@ -3308,43 +3308,46 @@ useEffect(() => {
                                     newOrUpdatedCount++;
                                 });
                                 
-                                let mergedData = Array.from(dataMap.values());
-                                
-                                                            
-                                // === INTEGRACÃO AUTOMÁTICA DA IA NO UPLOAD (CORRIGIDO) ===
-                                for (let i = 0; i < mergedData.length; i++) {
-                                    let row = { ...mergedData[i] };
-                                    const roles = ['instrutor1', 'instrutor2', 'instrutor3'];
-                                    let rowChanged = false;
+                                let mergedData = Array.from(dataMap.values());                                
+                                                           
+                                // === INTEGRACÃO AUTOMÁTICA DA IA NO UPLOAD (BLINDADA) ===
+                                try {
+                                    for (let i = 0; i < mergedData.length; i++) {
+                                        let row = { ...mergedData[i] };
+                                        const roles = ['instrutor1', 'instrutor2', 'instrutor3'];
+                                        let rowChanged = false;
 
-                                    for (let role of roles) {
-                                        const currentValue = String(row[role] || '').trim().toLowerCase();
-                                        
-                                        // Se achar a vaga em branco, aciona a IA
-                                        if (currentValue === '' || currentValue.includes('nao atribuido') || currentValue === 'undefined') {
-                                            const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
+                                        for (let role of roles) {
+                                            const currentValue = String(row[role] || '').trim().toLowerCase();
                                             
-                                            // AQUI ESTÁ A CORREÇÃO: Passamos o 'combinedInsts' para a IA enxergar a equipe antes mesmo de salvar!
-                                            const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], combinedInsts, null, mergedData);
-                                            
-                                            if (options && options.length > 0) {
-                                                row[role] = options[0].nome;
-                                                rowChanged = true;
-                                                if (!row.autoAssignedLogs) row.autoAssignedLogs = {};
-                                                row.autoAssignedLogs[role] = {
-                                                    nome: options[0].nome,
-                                                    type: 'upload-auto-fill',
-                                                    reason: `Preenchido automaticamente no upload respeitando equilíbrio e rotação.`
-                                                };
+                                            // Se achar a vaga em branco, aciona a IA
+                                            if (currentValue === '' || currentValue.includes('nao atribuido') || currentValue === 'undefined') {
+                                                const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
+                                                const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], combinedInsts, null, mergedData);
+                                                
+                                                if (options && options.length > 0) {
+                                                    row[role] = options[0].nome;
+                                                    rowChanged = true;
+                                                    if (!row.autoAssignedLogs) row.autoAssignedLogs = {};
+                                                    row.autoAssignedLogs[role] = {
+                                                        nome: options[0].nome,
+                                                        type: 'upload-auto-fill',
+                                                        reason: `Preenchido automaticamente no upload respeitando equilíbrio e rotação.`
+                                                    };
+                                                }
                                             }
                                         }
+                                        if (rowChanged) mergedData[i] = row;
                                     }
-                                    if (rowChanged) mergedData[i] = row;
+                                } catch (aiError) {
+                                    // Se a IA travar, o sistema avisa o porquê, mas não impede a importação!
+                                    console.error("Erro crítico na IA durante o upload:", aiError);
+                                    alert("⚠️ Aviso: As turmas foram carregadas, mas a IA não conseguiu preencher os instrutores devido a um erro: " + aiError.message);
                                 }
 
                                 // Purifica contra Erro 400 do Firebase e salva
                                 mergedData = JSON.parse(JSON.stringify(mergedData));
-                                const newLogs = addLog("Importação IA", "Lote", "Inteligente", `${newOrUpdatedCount} turmas processadas com preenchimento automático.`);
+                                const newLogs = addLog("Importação IA", "Lote", "Inteligente", `${newOrUpdatedCount} turmas processadas.`);
                                 
                                 persist(mergedData, substitutions, newLogs);
                                 setData(mergedData); 
@@ -3352,7 +3355,7 @@ useEffect(() => {
                                 if (batchSummary.length > 0) {
                                     setImportSummaryModal(batchSummary); 
                                 } else {
-                                    showNotify(`Sucesso! ${newOrUpdatedCount} turmas importadas e vagas vazias preenchidas pela IA!`, "success"); 
+                                    showNotify(`Sucesso! Turmas importadas e processadas!`, "success"); 
                                 }
                                 // ==============================================
                                
