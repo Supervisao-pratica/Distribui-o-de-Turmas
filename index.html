@@ -3903,7 +3903,44 @@ useEffect(() => {
             const totalInstrutoresAtivos = dashboardInstructors.length;
             const totalAlunosGeral = dashboardInstructors.reduce((acc, inst) => acc + inst.totalAlunos, 0);
             const mediaAlunosPorInstrutor = totalInstrutoresAtivos > 0 ? Math.round(totalAlunosGeral / totalInstrutoresAtivos) : 0;
+            const autoFillEmptySlots = () => {
+            // Cria uma cópia profunda/segura do banco de dados atual
+            const updatedData = data.map(row => {
+                let updatedRow = { ...row };
+                let mudou = false;
 
+                // Se o Instrutor Atual estiver preenchido, usamos ele como referência para os vazios
+                const referencia = row.instrutorAtual || "";
+
+                if (referencia) {
+                    if (!row.instrutor1 || row.instrutor1.trim() === "") {
+                        updatedRow.instrutor1 = referencia;
+                        mudou = true;
+                    }
+                    if (!row.instrutor2 || row.instrutor2.trim() === "") {
+                        updatedRow.instrutor2 = referencia;
+                        mudou = true;
+                    }
+                    if (!row.instrutor3 || row.instrutor3.trim() === "") {
+                        updatedRow.instrutor3 = referencia;
+                        mudou = true;
+                    }
+                }
+
+                // Se mudou algo, adicionamos um log ou apenas retornamos a linha modificada
+                return updatedRow;
+            });
+
+            // Atualiza o estado do React com os novos dados preenchidos
+            setData(updatedData);
+            
+            // Alerta opcional para notificar o usuário do sucesso
+            if (typeof showNotify === 'function') {
+                showNotify("Campos vazios preenchidos com o Instrutor Atual!", "success");
+            } else {
+                alert("Campos vazios preenchidos com sucesso!");
+            }
+        };
             // === O DESENHO DO SISTEMA COMEÇA AQUI ===
             return (
                 <div className="min-h-screen bg-slate-100 flex flex-col pb-10">
@@ -3918,67 +3955,27 @@ useEffect(() => {
                                 {LOCAL_TEST_MODE && <span className="px-3 py-2 bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold text-xs uppercase tracking-wide">Modo Local</span>}
                                 <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos (v100)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
                                 <div className="flex gap-2">
+                                    
+                                    <button onClick={autoFillEmptySlots} className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105 border border-emerald-400" title="Preencher Instrutor 1, 2 ou 3 que estiverem em branco">
+                                    <Icons.UserPlus /> Preencher Vazios (IA)
+                                </button> 
+                            <button onClick={rebalanceWorkload}
+                                
+                             
+                                        
+    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"
+    title={`Reorganiza turmas atuais e futuras para manter diferença máxima de ${BALANCE_LIMITS.maxGap} alunos por mês quando possível`}
+>
+    <Icons.Robot /> Equilibrar Turmas
+</button>
+                                    <button onClick={() => setIsSubModalOpen(true)} className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"><Icons.Switch /> Transferir</button>
 
-    {/* Preencher Vazios */}
-    <button
-        onClick={autoFillEmptySlots}
-        className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105 border border-emerald-400"
-        title="Preencher Instrutor 1, 2 ou 3 que estiverem em branco"
-    >
-        <Icons.UserPlus />
-        Preencher Vazios (IA)
-    </button>
-
-    {/* Equilibrar Turmas */}
-    <button
-        onClick={rebalanceWorkload}
-        className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"
-        title={`Reorganiza turmas atuais e futuras para manter diferença máxima de ${BALANCE_LIMITS.maxGap} alunos por mês quando possível`}
-    >
-        <Icons.Robot />
-        Equilibrar Turmas
-    </button>
-
-    {/* Transferir */}
-    <button
-        onClick={() => setIsSubModalOpen(true)}
-        className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"
-    >
-        <Icons.Switch />
-        Transferir
-    </button>
-
-    {/* Novo Instrutor */}
-    <button
-        onClick={() => setIsNewInstModalOpen(true)}
-        className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"
-    >
-        <Icons.UserPlus />
-        Novo Instrutor
-    </button>
-
-    {/* Nova Turma */}
-    <button
-        onClick={() => setIsFormOpen(true)}
-        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"
-    >
-        <Icons.Plus />
-        Nova Turma
-    </button>
-
-    {/* Sair */}
-    <button
-        onClick={() =>
-            LOCAL_TEST_MODE
-                ? showNotify("Modo local ativo: sem conexão com Firebase.", "success")
-                : window.authMethods.signOut(window.auth)
-        }
-        className="ml-2 px-3 py-2 bg-slate-100 text-slate-500 rounded-lg hover:bg-red-50 hover:text-red-600 font-bold text-sm flex gap-1 items-center shadow-sm transition"
-    >
-        Sair
-    </button>
-
-</div>
+                                    <button onClick={() => setIsNewInstModalOpen(true)} className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"><Icons.UserPlus /> Novo Instrutor</button>
+                                    <button onClick={() => setIsFormOpen(true)} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"><Icons.Plus /> Nova Turma</button>
+                                    
+                                    {/* Botão de deslogar do sistema */}
+                                    <button onClick={() => LOCAL_TEST_MODE ? showNotify("Modo local ativo: sem conexão com Firebase.", "success") : window.authMethods.signOut(window.auth)} className="ml-2 px-3 py-2 bg-slate-100 text-slate-500 rounded-lg hover:bg-red-50 hover:text-red-600 font-bold text-sm flex gap-1 items-center shadow-sm transition">Sair</button>
+                                </div>
                             </div>
                         </div>
                         <div className="bg-slate-50 border-b border-gray-200 nav-bar">
