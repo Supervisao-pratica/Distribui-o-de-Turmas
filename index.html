@@ -3308,50 +3308,16 @@ useEffect(() => {
                                     newOrUpdatedCount++;
                                 });
                                 
-                                let mergedData = Array.from(dataMap.values());
-                                
-                                // === INTEGRACÃO AUTOMÁTICA DA IA NO UPLOAD ===
-                                for (let i = 0; i < mergedData.length; i++) {
-                                    let row = { ...mergedData[i] };
-                                    const roles = ['instrutor1', 'instrutor2', 'instrutor3'];
-                                    let rowChanged = false;
-
-                                    for (let role of roles) {
-                                        const currentValue = String(row[role] || '').trim().toLowerCase();
-                                        
-                                        // Se achar a vaga em branco, aciona a IA
-                                        if (currentValue === '' || currentValue.includes('nao atribuido')) {
-                                            const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
-                                            const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], null, null, mergedData);
-                                            
-                                            if (options && options.length > 0) {
-                                                row[role] = options[0].nome;
-                                                rowChanged = true;
-                                                if (!row.autoAssignedLogs) row.autoAssignedLogs = {};
-                                                row.autoAssignedLogs[role] = {
-                                                    nome: options[0].nome,
-                                                    type: 'upload-auto-fill',
-                                                    reason: `Preenchido automaticamente no upload respeitando equilíbrio e rotação.`
-                                                };
-                                            }
-                                        }
-                                    }
-                                    if (rowChanged) mergedData[i] = row;
-                                }
-
-                                // Purifica contra Erro 400 do Firebase e salva
-                                mergedData = JSON.parse(JSON.stringify(mergedData));
-                                const newLogs = addLog("Importação IA", "Lote", "Inteligente", `${newOrUpdatedCount} turmas processadas com preenchimento automático.`);
+                                const mergedData = Array.from(dataMap.values());
+                                const newLogs = addLog("Importação", "Lote", "Inteligente", `${newOrUpdatedCount} turmas criadas ou atualizadas.`);
                                 
                                 persist(mergedData, substitutions, newLogs);
-                                setData(mergedData); // Atualiza a tela na mesma hora
                                 
                                 if (batchSummary.length > 0) {
                                     setImportSummaryModal(batchSummary); 
                                 } else {
-                                    showNotify(`Sucesso! ${newOrUpdatedCount} turmas importadas e vagas vazias preenchidas pela IA!`, "success"); 
+                                    showNotify(`Sucesso! ${newOrUpdatedCount} turmas importadas da planilha sem nenhuma vaga em branco.`); 
                                 }
-                                // ==============================================
                             }
                         }
                     } catch (err) { showNotify("Erro ao ler arquivo. Verifique se é um Excel válido.", "error"); }
@@ -3918,10 +3884,6 @@ useEffect(() => {
                                 {LOCAL_TEST_MODE && <span className="px-3 py-2 bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold text-xs uppercase tracking-wide">Modo Local</span>}
                                 <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos (v100)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
                                 <div className="flex gap-2">
-                                    {/* Botão Físico de Preencher Vazios */}
-                                <button onClick={autoFillEmptySlots} className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105 border border-emerald-400" title="Preencher Instrutor 1, 2 ou 3 que estiverem em branco">
-                                    <Icons.UserPlus /> Preencher Vazios (IA)
-                                </button>
                                     <button
     onClick={rebalanceWorkload}
     className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"
