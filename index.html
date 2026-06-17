@@ -931,102 +931,130 @@ const handleClearAllData = () => {
             };
 
             const getRankedInstructorOptions = (targetCourse, excludedInstructors = [], slotType = 'any', targetModalidade = 'Aperfeiçoamento', pendingData = [], customPool = null, evaluationDate = null, baseDataOverride = null) => {
-                const stats = {};
-                const isTecnica = targetModalidade === 'Técnica';
-                const pool = customPool || uniqueInstrutores;
-                
-                const normalizedExcludes = (Array.isArray(excludedInstructors) ? excludedInstructors : [excludedInstructors])
-                    .filter(Boolean)
-                    .map(normalizeText);
+    const stats = {};
+    const isTecnica = targetModalidade === 'Técnica';
+    const pool = customPool || uniqueInstrutores;
+    
+    const normalizedExcludes = (Array.isArray(excludedInstructors) ? excludedInstructors : [excludedInstructors])
+        .filter(Boolean)
+        .map(normalizeText);
 
-                let allowedInstructors = pool.filter(name => !blockedInstructors.includes(normalizeText(name)));
-                if (isTecnica) {
-                    allowedInstructors = allowedInstructors.filter(name => tecnicaWhitelist.includes(normalizeText(name)));
-                }
+    let allowedInstructors = pool.filter(name => !blockedInstructors.includes(normalizeText(name)));
+    if (isTecnica) {
+        allowedInstructors = allowedInstructors.filter(name => tecnicaWhitelist.includes(normalizeText(name)));
+    }
 
-                allowedInstructors.forEach(name => {
-                    if (normalizeText(name).includes('nao atribuido')) return;
-                    stats[name] = { nome: name, totalAlunos: 0, totalTurmas: 0, turmasDoCurso: 0, countAsInst1: 0, countAsInst2: 0 };
-                });
+    allowedInstructors.forEach(name => {
+        if (normalizeText(name).includes('nao atribuido')) return;
+        stats[name] = { nome: name, totalAlunos: 0, totalTurmas: 0, turmasDoCurso: 0, countAsInst1: 0, countAsInst2: 0 };
+    });
 
-                const normalizedTarget = normalizeText(targetCourse);
-                const allData = baseDataOverride !== null ? [...baseDataOverride, ...pendingData] : [...data, ...pendingData];
-                
-                const evalDateStr = (evaluationDate && evaluationDate.length === 10) ? evaluationDate : viewDate;
-                const targetDateObj = new Date(evalDateStr + 'T00:00:00'); 
+    const normalizedTarget = normalizeText(targetCourse);
+    const allData = baseDataOverride !== null ? [...baseDataOverride, ...pendingData] : [...data, ...pendingData];
+    
+    const evalDateStr = (evaluationDate && evaluationDate.length === 10) ? evaluationDate : viewDate;
+    const targetDateObj = new Date(evalDateStr + 'T00:00:00'); 
 
-                allData.forEach(row => {
-                    const i1 = getCanonical(safeString(row.instrutor1));
-                    const i2 = getCanonical(safeString(row.instrutor2));
-                    if (i1 && stats[i1]) stats[i1].countAsInst1++;
-                    if (i2 && stats[i2]) stats[i2].countAsInst2++;
+    allData.forEach(row => {
+        const i1 = getCanonical(safeString(row.instrutor1));
+        const i2 = getCanonical(safeString(row.instrutor2));
+        if (i1 && stats[i1]) stats[i1].countAsInst1++;
+        if (i2 && stats[i2]) stats[i2].countAsInst2++;
 
-                    const info = getActiveInfoOnDate(row, targetDateObj);
-                    
-                    if (info.status === 'Finalizado' || info.status === 'Agendado') return; 
+        const info = getActiveInfoOnDate(row, targetDateObj);
+        
+        if (info.status === 'Finalizado' || info.status === 'Agendado') return; 
 
-                    const activeInst = info.inst;
-                    if (activeInst && stats[activeInst]) {
-                        stats[activeInst].totalAlunos += parseInt(row.alunos) || 0;
-                        stats[activeInst].totalTurmas += 1;
-                        if (normalizeText(row.curso) === normalizedTarget && getSafeModalidade(row) === targetModalidade) {
-                            stats[activeInst].turmasDoCurso += 1;
-                        }
-                    }
-                });
+        const activeInst = info.inst;
+        if (activeInst && stats[activeInst]) {
+            stats[activeInst].totalAlunos += parseInt(row.alunos) || 0;
+            stats[activeInst].totalTurmas += 1;
+            if (normalizeText(row.curso) === normalizedTarget && getSafeModalidade(row) === targetModalidade) {
+                stats[activeInst].turmasDoCurso += 1;
+            }
+        }
+    });
 
-                return Object.values(stats)
-                    .filter(i => !normalizedExcludes.includes(normalizeText(i.nome)))
-                    .map(inst => {
-                        let score = inst.totalAlunos; 
-                        let tip = `[${inst.totalAlunos} Alunos na data]`;
-                        let type = "good";
-                        let emoji = "✅";
-                        let flags = [];
-                        
-                        if (inst.turmasDoCurso >= 3) {
-                            score += 300; 
-                            emoji = "⚠️"; type = "warning";
-                            flags.push(`⚠️ Concentração (${inst.turmasDoCurso}x)`);
-                        } else if (inst.turmasDoCurso >= 2) {
-                            score += 50;
-                        } else if (inst.turmasDoCurso === 0) {
-                            score -= 30; 
-                            flags.push(`⭐ Novo no Curso`);
-                        }
+    const availableStats = Object.values(stats).filter(i => !normalizedExcludes.includes(normalizeText(i.nome)));
+    
+    const minLoadCurrent = availableStats.length > 0 ? Math.min(...availableStats.map(i => i.totalAlunos)) : 0;
+    const minTurmasCurrent = availableStats.length > 0 ? Math.min(...availableStats.map(i => i.totalTurmas)) : 0;
 
-                        if (inst.totalAlunos >= BALANCE_LIMITS.max) {
-                            score += 50000; emoji = "🔴"; type = "bad"; 
-                            flags.push(`🔴 Carga Máxima (Não Alocar)`);
-                        } else if (inst.totalAlunos >= BALANCE_LIMITS.min + BALANCE_LIMITS.maxGap) {
-                            score += 300; if(emoji === "✅" || emoji === "⭐") emoji = "🟡"; type = "warning"; 
-                            flags.push(`🟡 Carga Alta`);
-                        }
+    return availableStats.map(inst => {
+        let score = inst.totalAlunos; 
+        let tip = `[${inst.totalAlunos} Alunos | ${inst.totalTurmas} Turmas]`;
+        let type = "good";
+        let emoji = "✅";
+        let flags = [];
 
-                        if (inst.totalAlunos < BALANCE_LIMITS.min - 50) {
-                            score -= 1500; 
-                            if(emoji === "✅" || emoji === "⭐") emoji = "🚀";
-                            flags.push(`🚀 Urgente: Ocioso`);
-                        } else if (inst.totalAlunos < BALANCE_LIMITS.min) {
-                            score -= 900;
-                            if(emoji === "✅" || emoji === "⭐") emoji = "🚀";
-                            flags.push(`🚀 Prioridade: abaixo de ${BALANCE_LIMITS.min}`);
-                        }
+        // ==========================================
+        // 1º REGRA DE TITÂNIO: MÍNIMO DE 200 ALUNOS
+        // ==========================================
+        if (inst.totalAlunos < BALANCE_LIMITS.min) {
+            score -= 5000000;
+            emoji = "🚀";
+            flags.push(`🚀 Urgente: < ${BALANCE_LIMITS.min} Alunos`);
+        }
 
-                        const totalRoles = inst.countAsInst1 + inst.countAsInst2;
-                        const ratio1 = totalRoles > 0 ? inst.countAsInst1 / totalRoles : 0;
-                        if (slotType === 'instrutor1' && inst.countAsInst1 >= 3 && ratio1 > 0.7) {
-                            score += 150; 
-                            if(emoji !== "🔴" && emoji !== "🟠" && emoji !== "🔥") emoji = "⛔"; 
-                            flags.push(`⛔ Equilíbrio P1/P2`);
-                        }
+        // ==========================================
+        // 2º REGRA DE TITÂNIO: GAP MÁXIMO DE 40 ALUNOS
+        // ==========================================
+        if ((inst.totalAlunos + 25) > minLoadCurrent + BALANCE_LIMITS.maxGap) {
+            score += 8000000;
+            if(emoji === "✅" || emoji === "🚀") emoji = "✋"; type = "warning";
+            flags.push(`✋ Teto de Gap de Alunos`);
+        }
 
-                        if (flags.length > 0) tip += " - " + flags.join(" | ");
+        // ==========================================
+        // 3º REGRA DE TITÂNIO: EQUILÍBRIO DE TURMAS
+        // ==========================================
+        if (inst.totalTurmas >= minTurmasCurrent + BALANCE_LIMITS.maxTurmasGap) {
+            score += 4000000;
+            if(emoji === "✅" || emoji === "🚀") emoji = "⚖️"; type = "warning";
+            flags.push(`⚖️ Teto de Turmas`);
+        } else if (inst.totalTurmas === minTurmasCurrent) {
+            score -= 600000;
+            flags.push(`⭐ Prioridade: Menos Turmas`);
+        }
 
-                        return { ...inst, score, label: `(${inst.totalAlunos} alunos)`, emoji, type, tip };
-                    })
-                    .sort((a,b) => a.score - b.score);
-            };
+        // ==========================================
+        // 4º REGRA (NOVA): ROTAÇÃO PARA INSTRUTOR 1
+        // ==========================================
+        if (slotType === 'instrutor1') {
+            // A IA agora soma 150 mil pontos de penalidade para cada vez que ele já for Instrutor 1.
+            // Isso obriga o sistema a escolher outras pessoas para o cargo principal!
+            score += inst.countAsInst1 * 150000;
+            flags.push(`🔄 Rotação P1 (${inst.countAsInst1}x)`);
+        }
+
+        // Regras de Especialidade
+        if (inst.turmasDoCurso >= 3) {
+            score += 3000; 
+            emoji = "⚠️"; type = "warning";
+            flags.push(`⚠️ Concentração (${inst.turmasDoCurso}x)`);
+        } else if (inst.turmasDoCurso >= 2) {
+            score += 500;
+        } else if (inst.turmasDoCurso === 0) {
+            score -= 100; 
+            flags.push(`⭐ Novo no Curso`);
+        }
+
+        if (inst.totalAlunos >= BALANCE_LIMITS.hardMax) {
+            score += 20000000; emoji = "🔴"; type = "bad"; 
+            flags.push(`🔴 Limite Operacional`);
+        } else if (inst.totalAlunos >= BALANCE_LIMITS.max) {
+            score += 50000; emoji = "🔴"; type = "bad"; 
+            flags.push(`🔴 Carga Máxima`);
+        } else if (inst.totalAlunos >= BALANCE_LIMITS.min + BALANCE_LIMITS.maxGap) {
+            score += 1000; if(emoji === "✅" || emoji === "⭐") emoji = "🟡"; type = "warning"; 
+            flags.push(`🟡 Carga Alta`);
+        }
+
+        if (flags.length > 0) tip += " - " + flags.join(" | ");
+
+        return { ...inst, score, label: `(${inst.totalAlunos} al / ${inst.totalTurmas} trm)`, emoji, type, tip };
+    }).sort((a,b) => a.score - b.score);
+};
 // === IA: REBALANCEAMENTO FUTURO DE INSTRUTORES ===
 const BALANCE_LIMITS = {
     min: 200,
@@ -3280,16 +3308,50 @@ useEffect(() => {
                                     newOrUpdatedCount++;
                                 });
                                 
-                                const mergedData = Array.from(dataMap.values());
-                                const newLogs = addLog("Importação", "Lote", "Inteligente", `${newOrUpdatedCount} turmas criadas ou atualizadas.`);
+                                let mergedData = Array.from(dataMap.values());
+                                
+                                // === INTEGRACÃO AUTOMÁTICA DA IA NO UPLOAD ===
+                                for (let i = 0; i < mergedData.length; i++) {
+                                    let row = { ...mergedData[i] };
+                                    const roles = ['instrutor1', 'instrutor2', 'instrutor3'];
+                                    let rowChanged = false;
+
+                                    for (let role of roles) {
+                                        const currentValue = String(row[role] || '').trim().toLowerCase();
+                                        
+                                        // Se achar a vaga em branco, aciona a IA
+                                        if (currentValue === '' || currentValue.includes('nao atribuido')) {
+                                            const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
+                                            const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], null, null, mergedData);
+                                            
+                                            if (options && options.length > 0) {
+                                                row[role] = options[0].nome;
+                                                rowChanged = true;
+                                                if (!row.autoAssignedLogs) row.autoAssignedLogs = {};
+                                                row.autoAssignedLogs[role] = {
+                                                    nome: options[0].nome,
+                                                    type: 'upload-auto-fill',
+                                                    reason: `Preenchido automaticamente no upload respeitando equilíbrio e rotação.`
+                                                };
+                                            }
+                                        }
+                                    }
+                                    if (rowChanged) mergedData[i] = row;
+                                }
+
+                                // Purifica contra Erro 400 do Firebase e salva
+                                mergedData = JSON.parse(JSON.stringify(mergedData));
+                                const newLogs = addLog("Importação IA", "Lote", "Inteligente", `${newOrUpdatedCount} turmas processadas com preenchimento automático.`);
                                 
                                 persist(mergedData, substitutions, newLogs);
+                                setData(mergedData); // Atualiza a tela na mesma hora
                                 
                                 if (batchSummary.length > 0) {
                                     setImportSummaryModal(batchSummary); 
                                 } else {
-                                    showNotify(`Sucesso! ${newOrUpdatedCount} turmas importadas da planilha sem nenhuma vaga em branco.`); 
+                                    showNotify(`Sucesso! ${newOrUpdatedCount} turmas importadas e vagas vazias preenchidas pela IA!`, "success"); 
                                 }
+                                // ==============================================
                             }
                         }
                     } catch (err) { showNotify("Erro ao ler arquivo. Verifique se é um Excel válido.", "error"); }
@@ -3856,6 +3918,10 @@ useEffect(() => {
                                 {LOCAL_TEST_MODE && <span className="px-3 py-2 bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold text-xs uppercase tracking-wide">Modo Local</span>}
                                 <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos (v100)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
                                 <div className="flex gap-2">
+                                    {/* Botão Físico de Preencher Vazios */}
+                                <button onClick={autoFillEmptySlots} className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105 border border-emerald-400" title="Preencher Instrutor 1, 2 ou 3 que estiverem em branco">
+                                    <Icons.UserPlus /> Preencher Vazios (IA)
+                                </button>
                                     <button
     onClick={rebalanceWorkload}
     className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"
