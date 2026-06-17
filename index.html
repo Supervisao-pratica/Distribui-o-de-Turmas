@@ -3310,49 +3310,69 @@ useEffect(() => {
                                 
                                 let mergedData = Array.from(dataMap.values());
                                 
-                                // === INTEGRACÃO AUTOMÁTICA DA IA NO UPLOAD ===
-                    let rowsWithAutoFill = parsedRows.map(row => ({ ...row }));
-                    
-                    for (let i = 0; i < rowsWithAutoFill.length; i++) {
-                        let row = { ...rowsWithAutoFill[i] };
-                        const roles = ['instrutor1', 'instrutor2', 'instrutor3'];
-                        let rowChanged = false;
-
-                        for (let role of roles) {
-                            const currentValue = String(row[role] || '').trim().toLowerCase();
-                            if (currentValue === '' || currentValue.includes('nao atribuido')) {
-                                const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
-                                const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], null, null, rowsWithAutoFill);
                                 
-                                if (options && options.length > 0) {
-                                    row[role] = options[0].nome;
-                                    rowChanged = true;
-                                    if (!row.autoAssignedLogs) row.autoAssignedLogs = {};
-                                    row.autoAssignedLogs[role] = {
-                                        nome: options[0].nome,
-                                        type: 'upload-auto-fill',
-                                        reason: `Preenchido automaticamente no upload respeitando equilíbrio e rotação.`
-                                    };
-                                }
-                            }
-                        }
-                        if (rowChanged) rowsWithAutoFill[i] = row;
-                    }
+// === INTEGRACÃO AUTOMÁTICA DA IA NO UPLOAD ===
+        let rowsWithAutoFill = parsedRows.map(row => ({ ...row }));
 
-                    // Purifica contra erros 400 do Firestore e salva
-                    rowsWithAutoFill = JSON.parse(JSON.stringify(rowsWithAutoFill));
-                    persist(rowsWithAutoFill, substitutions, addLog("Upload Planilha", "SISTEMA", "Agosto", "Planilha importada com preenchimento automático de vagas vazias."));
-                    setData(rowsWithAutoFill);
-                    showNotify("Planilha importada e vagas preenchidas automaticamente com sucesso!", "success");
-                    
-                                }
-                               
-                            }
-                        }
-                    } catch (err) { showNotify("Erro ao ler arquivo. Verifique se é um Excel válido.", "error"); }
-                };
-                reader.readAsArrayBuffer(file); e.target.value = null;
-            };
+        for (let i = 0; i < rowsWithAutoFill.length; i++) {
+            let row = { ...rowsWithAutoFill[i] };
+            const roles = ['instrutor1', 'instrutor2', 'instrutor3'];
+            let rowChanged = false;
+
+            for (let role of roles) {
+                const currentValue = String(row[role] || '').trim().toLowerCase();
+
+                if (currentValue === '' || currentValue.includes('nao atribuido')) {
+                    const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
+
+                    const options = getBalancedInstructorOptions(
+                        row, role, alreadyInClass, [], null, null, rowsWithAutoFill
+                    );
+
+                    if (options && options.length > 0) {
+                        row[role] = options[0].nome;
+                        rowChanged = true;
+
+                        if (!row.autoAssignedLogs) row.autoAssignedLogs = {};
+
+                        row.autoAssignedLogs[role] = {
+                            nome: options[0].nome,
+                            type: 'upload-auto-fill',
+                            reason: `Preenchido automaticamente no upload respeitando equilíbrio e rotação.`
+                        };
+                    }
+                }
+            }
+
+            if (rowChanged) rowsWithAutoFill[i] = row;
+        }
+
+        // salvar
+        rowsWithAutoFill = JSON.parse(JSON.stringify(rowsWithAutoFill));
+
+        persist(
+            rowsWithAutoFill,
+            substitutions,
+            addLog("Upload Planilha", "SISTEMA", "Agosto",
+            "Planilha importada com preenchimento automático de vagas vazias.")
+        );
+
+        setData(rowsWithAutoFill);
+
+        showNotify(
+            "Planilha importada e vagas preenchidas automaticamente com sucesso!",
+            "success"
+        );
+
+    } catch (err) {
+        showNotify("Erro ao ler arquivo. Verifique se é um Excel válido.", "error");
+        console.error(err);
+    }
+};
+
+reader.readAsArrayBuffer(file);
+e.target.value = null;
+
 
             const handleCreateClass = (e) => { 
                 e.preventDefault(); 
