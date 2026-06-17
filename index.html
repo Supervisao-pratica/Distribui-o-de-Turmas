@@ -323,6 +323,22 @@
             return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
         };
 
+        const normalizeAutoAssignedLogs = (logs) => {
+            if (!logs) return undefined;
+            if (typeof logs === 'object' && !Array.isArray(logs)) return logs;
+            if (typeof logs !== 'string') return undefined;
+
+            const clean = logs.trim();
+            if (!clean || clean === '{}' || clean === '[]') return undefined;
+
+            try {
+                const parsed = JSON.parse(clean);
+                return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : undefined;
+            } catch (e) {
+                return undefined;
+            }
+        };
+
         const formatDatePTBR = (iso) => { const s = safeString(iso); if(!s) return ''; const p = s.split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : s; };
 
         const fmtDate = (val) => { 
@@ -432,7 +448,7 @@
                     const localBlocked = JSON.parse(localStorage.getItem(BLOCK_KEY) || '[]');
                     const localExtraInstructors = JSON.parse(localStorage.getItem(EXTRA_INSTRUCTORS_KEY) || '[]');
 
-                    setData((Array.isArray(localData) ? localData : []).map(r => ({ ...r, modalidade: getSafeModalidade(r) })));
+                    setData((Array.isArray(localData) ? localData : []).map(r => ({ ...r, modalidade: getSafeModalidade(r), autoAssignedLogs: normalizeAutoAssignedLogs(r.autoAssignedLogs) })));
                     setSubstitutions(Array.isArray(localSubs) ? localSubs : []);
                     setLogs(Array.isArray(localLogs) ? localLogs : []);
                     setExtraInstructors(Array.isArray(localExtraInstructors) ? localExtraInstructors.map(safeString).filter(Boolean) : []);
@@ -461,7 +477,7 @@
                 const unsub = onSnapshot(doc(window.remoteDB, "sgt", "dadosGerais"), (docSnap) => {
                     if (docSnap.exists()) {
                         const dbData = docSnap.data();
-                        const parsedData = (dbData.data || []).map(r => ({...r, modalidade: getSafeModalidade(r)}));
+                        const parsedData = (dbData.data || []).map(r => ({...r, modalidade: getSafeModalidade(r), autoAssignedLogs: normalizeAutoAssignedLogs(r.autoAssignedLogs)}));
                         
                         setData(parsedData);
                         setLogs(dbData.logs || []);
@@ -488,13 +504,23 @@
             // === 4. FUNÇÃO PERSIST DEFINITIVA ===
             const persist = async (newData, newSubs, newLogs, nextBlockedInstructors = null) => {
                 const blockedToSave = Array.isArray(nextBlockedInstructors) ? nextBlockedInstructors : blockedInstructors;
+                const dataToSave = (Array.isArray(newData) ? newData : []).map(row => {
+                    const logs = normalizeAutoAssignedLogs(row.autoAssignedLogs);
+                    const normalizedRow = { ...row, modalidade: getSafeModalidade(row) };
+                    if (logs && Object.keys(logs).length > 0) {
+                        normalizedRow.autoAssignedLogs = logs;
+                    } else {
+                        delete normalizedRow.autoAssignedLogs;
+                    }
+                    return normalizedRow;
+                });
                 setIsSaving(true);
                 
-                setData(newData);
+                setData(dataToSave);
                 setSubstitutions(newSubs); 
                 if(newLogs) setLogs(newLogs);
                 
-                localStorage.setItem(DB_KEY, JSON.stringify(newData));
+                localStorage.setItem(DB_KEY, JSON.stringify(dataToSave));
                 localStorage.setItem(SUB_KEY, JSON.stringify(newSubs));
                 if(newLogs) localStorage.setItem(LOG_KEY, JSON.stringify(newLogs));
                 localStorage.setItem(BLOCK_KEY, JSON.stringify(blockedToSave));
@@ -506,7 +532,7 @@
                         }
                         const { doc, setDoc } = window.dbMethods;
                         await setDoc(doc(window.remoteDB, "sgt", "dadosGerais"), {
-                            data: newData,
+                            data: dataToSave,
                             logs: newLogs || logs,
                             substitutions: newSubs,
                             blockedInstructors: blockedToSave,
@@ -755,7 +781,7 @@ const handleClearAllData = () => {
                 const target = new Date(viewDate + 'T00:00:00');
                 return data.map(row => {
                     const info = getActiveInfoOnDate(row, target);
-                    return { ...row, instrutorAtual: info.inst, status: info.status, modalidade: getSafeModalidade(row), autoAssignedLogs: row.autoAssignedLogs };
+                    return { ...row, instrutorAtual: info.inst, status: info.status, modalidade: getSafeModalidade(row), autoAssignedLogs: normalizeAutoAssignedLogs(row.autoAssignedLogs) };
                 });
             }, [data, viewDate, canonicalNameMap]);
 
@@ -1003,12 +1029,13 @@ const handleClearAllData = () => {
             };
 // === IA: REBALANCEAMENTO FUTURO DE INSTRUTORES ===
 const BALANCE_LIMITS = {
-    min: 200,      // O sistema agora tentará segurar isso como piso absoluto
-    ideal: 240,    // Aumentamos o ideal para o sistema não "relaxar" quando chegar em 210
+    min: 200,
+    ideal: 235,
     max: 270,
     hardMax: 280,
     maxGap: 40,
-    monthsAhead: 6, // Aumentei para o sistema olhar mais longe
+    maxSameCourse: 3,
+    monthsAhead: 0,
     maxMoves: 220
 };
 
@@ -1179,14 +1206,41 @@ const getBalanceSnapshot = (rows, dateStr, instructorPoolOverride = null) => {
 const getBalanceTargetsForSnapshot = (snapshot) => {
     const base = snapshot || [];
     const totalAlunos = base.reduce((acc, inst) => acc + inst.totalAlunos, 0);
-    const avg = base.length > 0 ? Math.round(totalAlunos / base.length) : BALANCE_LIMITS.ideal;
+    const avg = base.length > 0 ? Math.round(totalAlunos / base.length) : 0;
+    const halfGap = Math.floor(BALANCE_LIMITS.maxGap / 2);
+    const isMinPossible = base.length > 0 ? totalAlunos >= (BALANCE_LIMITS.min * base.length) : true;
 
-    // FORÇA: Se a média estiver abaixo de 200, o sistema entende que precisa subir a barra
-    let effectiveMin = Math.max(BALANCE_LIMITS.min, avg - 20); 
-    let effectiveMax = Math.min(BALANCE_LIMITS.hardMax, effectiveMin + BALANCE_LIMITS.maxGap);
-    
-    // Se o instrutor está abaixo do min, o alvo de "ideal" sobe para forçar a correção
-    let effectiveIdeal = Math.max(BALANCE_LIMITS.ideal, avg);
+    if (!isMinPossible) {
+        const lowVolumeMin = Math.max(0, avg - halfGap);
+        return {
+            avg,
+            effectiveMin: lowVolumeMin,
+            effectiveIdeal: avg,
+            effectiveMax: lowVolumeMin + BALANCE_LIMITS.maxGap,
+            totalAlunos,
+            isMinPossible
+        };
+    }
+
+    let effectiveMin = Math.max(BALANCE_LIMITS.min, avg - halfGap);
+    let effectiveMax = effectiveMin + BALANCE_LIMITS.maxGap;
+
+    if (avg > effectiveMax) {
+        effectiveMax = avg;
+        effectiveMin = Math.max(avg - BALANCE_LIMITS.maxGap, BALANCE_LIMITS.min);
+    }
+
+    if (effectiveMax > BALANCE_LIMITS.max && avg <= BALANCE_LIMITS.max) {
+        effectiveMax = BALANCE_LIMITS.max;
+        effectiveMin = Math.max(avg - BALANCE_LIMITS.maxGap, Math.min(effectiveMin, effectiveMax));
+    }
+
+    if (avg > BALANCE_LIMITS.max) {
+        effectiveMax = avg;
+        effectiveMin = Math.max(avg - BALANCE_LIMITS.maxGap, BALANCE_LIMITS.min);
+    }
+
+    const effectiveIdeal = avg || BALANCE_LIMITS.ideal;
 
     return {
         avg,
@@ -1194,7 +1248,7 @@ const getBalanceTargetsForSnapshot = (snapshot) => {
         effectiveIdeal,
         effectiveMax,
         totalAlunos,
-        isMinPossible: true 
+        isMinPossible
     };
 };
 
@@ -2005,9 +2059,7 @@ const getMonthlyBalanceSweepPlan = (rows, pool, monthsAhead = 5) => {
 const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(), instructorPoolOverride = null, options = {}) => {
     let newRows = (sourceRows || []).map(row => ({
         ...row,
-        autoAssignedLogs: row.autoAssignedLogs && typeof row.autoAssignedLogs === 'object'
-            ? { ...row.autoAssignedLogs }
-            : row.autoAssignedLogs
+        autoAssignedLogs: normalizeAutoAssignedLogs(row.autoAssignedLogs)
     }));
     const balanceDates = getChronologicalBalanceDates(newRows);
     const pool = instructorPoolOverride || uniqueInstrutores;
@@ -2412,9 +2464,7 @@ const redistributeBlockedInstructorRoles = (sourceRows, blockedList = blockedIns
 
     let newRows = (sourceRows || []).map(row => ({
         ...row,
-        autoAssignedLogs: row.autoAssignedLogs && typeof row.autoAssignedLogs === 'object'
-            ? { ...row.autoAssignedLogs }
-            : row.autoAssignedLogs
+        autoAssignedLogs: normalizeAutoAssignedLogs(row.autoAssignedLogs)
     }));
 
     const changes = [];
@@ -3037,7 +3087,7 @@ useEffect(() => {
                                     instrutor3: safeString(row['Instrutor 3'] || row['instrutor3']),
                                     instrutorAtual: safeString(row['Instrutor Atual'] || row['instrutorAtual']),
                                     status: safeString(row['Situação'] || row['status']),
-                                    autoAssignedLogs: row['autoAssignedLogs'] ? row['autoAssignedLogs'] : undefined
+                                    autoAssignedLogs: normalizeAutoAssignedLogs(row['autoAssignedLogs'])
                                 }));
 
                                 const instructorSlotsFilled = newDB.reduce((acc, row) => {
@@ -3346,6 +3396,30 @@ useEffect(() => {
                         </div>
                     </div>
                 )
+            };
+
+            const getRoleSignalLog = (row, role) => {
+                const logs = normalizeAutoAssignedLogs(row.autoAssignedLogs);
+                return logs && logs[role] ? logs[role] : null;
+            };
+
+            const SignalBadge = ({ log }) => {
+                if (!log) return null;
+
+                const type = typeof log === 'object' ? log.type : '';
+                const reason = typeof log === 'object' ? log.reason : 'Preenchido automaticamente pelo sistema.';
+                const label = type === 'preserved-current'
+                    ? 'Atual'
+                    : (type === 'blocked-redistribution'
+                        ? 'Bloq.'
+                        : (type === 'rebalance-future' ? 'Ajuste IA' : 'IA'));
+                const badgeClass = type === 'preserved-current'
+                    ? 'bg-blue-100 text-blue-700 border-blue-200'
+                    : (type === 'blocked-redistribution'
+                        ? 'bg-red-100 text-red-700 border-red-200'
+                        : 'bg-purple-100 text-purple-700 border-purple-200');
+
+                return <span title={reason} className={`text-[8px] leading-none px-1 py-0.5 rounded border font-black ${badgeClass}`}>{label}</span>;
             };
 
             const getOrganizedInstructorData = (instructorName) => {
@@ -3930,9 +4004,22 @@ useEffect(() => {
                                                                     <td>{safeString(reportType === 'subs' ? row.instrutorSubstituto : row.analista)}</td>
                                                                     <td>
                                                                         <div className="flex flex-col">
-                                                                            <span className="font-bold text-blue-700">{row.instrutor1}</span>
-                                                                            {row.instrutor2 && <span className="text-xs text-green-600 font-semibold flex items-center gap-1">➔ {row.instrutor2} {row.dataTransferencia ? `(P1: ${formatDatePTBR(row.dataTransferencia)})` : ''}</span>}
-                                                                            {row.instrutor3 && <span className="text-xs text-purple-600 font-semibold flex items-center gap-1">➔ {row.instrutor3} {row.dataTransferencia2 ? `(P2: ${formatDatePTBR(row.dataTransferencia2)})` : ''}</span>}
+                                                                            <span className="font-bold text-blue-700 flex items-center gap-1 flex-wrap">
+                                                                                {row.instrutor1 || 'A Definir'}
+                                                                                <SignalBadge log={getRoleSignalLog(row, 'instrutor1')} />
+                                                                            </span>
+                                                                            {row.instrutor2 && (
+                                                                                <span className="text-xs text-green-600 font-semibold flex items-center gap-1 flex-wrap">
+                                                                                    ➔ {row.instrutor2} {row.dataTransferencia ? `(P1: ${formatDatePTBR(row.dataTransferencia)})` : ''}
+                                                                                    <SignalBadge log={getRoleSignalLog(row, 'instrutor2')} />
+                                                                                </span>
+                                                                            )}
+                                                                            {row.instrutor3 && (
+                                                                                <span className="text-xs text-purple-600 font-semibold flex items-center gap-1 flex-wrap">
+                                                                                    ➔ {row.instrutor3} {row.dataTransferencia2 ? `(P2: ${formatDatePTBR(row.dataTransferencia2)})` : ''}
+                                                                                    <SignalBadge log={getRoleSignalLog(row, 'instrutor3')} />
+                                                                                </span>
+                                                                            )}
                                                                         </div>
                                                                     </td>
                                                                     <td><span className="px-2 py-1 rounded text-[10px] font-bold border bg-blue-50 text-blue-700 border-blue-200">{row.status}</span></td>
