@@ -3918,10 +3918,7 @@ useEffect(() => {
                                 {LOCAL_TEST_MODE && <span className="px-3 py-2 bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold text-xs uppercase tracking-wide">Modo Local</span>}
                                 <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos (v100)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
                                 <div className="flex gap-2">
-                                    <button onClick={autoFillEmptySlots} className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105 border border-emerald-400" title="Preencher Instrutor 1, 2 ou 3 que estiverem em branco">
-                                    <Icons.UserPlus /> Preencher Vazios (IA)
-                                </button> 
-                            <button onClick={rebalanceWorkload}
+                                <button onClick={rebalanceWorkload}
                                 
                              
                                         
