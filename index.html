@@ -3311,7 +3311,7 @@ useEffect(() => {
                                 let mergedData = Array.from(dataMap.values());
                                 
                                                             
-                                // === INTEGRACÃO AUTOMÁTICA DA IA NO UPLOAD ===
+                                // === INTEGRACÃO AUTOMÁTICA DA IA NO UPLOAD (CORRIGIDO) ===
                                 for (let i = 0; i < mergedData.length; i++) {
                                     let row = { ...mergedData[i] };
                                     const roles = ['instrutor1', 'instrutor2', 'instrutor3'];
@@ -3321,9 +3321,11 @@ useEffect(() => {
                                         const currentValue = String(row[role] || '').trim().toLowerCase();
                                         
                                         // Se achar a vaga em branco, aciona a IA
-                                        if (currentValue === '' || currentValue.includes('nao atribuido')) {
+                                        if (currentValue === '' || currentValue.includes('nao atribuido') || currentValue === 'undefined') {
                                             const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
-                                            const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], null, null, mergedData);
+                                            
+                                            // AQUI ESTÁ A CORREÇÃO: Passamos o 'combinedInsts' para a IA enxergar a equipe antes mesmo de salvar!
+                                            const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], combinedInsts, null, mergedData);
                                             
                                             if (options && options.length > 0) {
                                                 row[role] = options[0].nome;
@@ -3345,7 +3347,7 @@ useEffect(() => {
                                 const newLogs = addLog("Importação IA", "Lote", "Inteligente", `${newOrUpdatedCount} turmas processadas com preenchimento automático.`);
                                 
                                 persist(mergedData, substitutions, newLogs);
-                                setData(mergedData); // Atualiza a tela na mesma hora
+                                setData(mergedData); 
                                 
                                 if (batchSummary.length > 0) {
                                     setImportSummaryModal(batchSummary); 
