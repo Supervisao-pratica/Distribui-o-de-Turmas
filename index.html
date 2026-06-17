@@ -939,7 +939,11 @@ const handleClearAllData = () => {
         .filter(Boolean)
         .map(normalizeText);
 
-    let allowedInstructors = pool.filter(name => !blockedInstructors.includes(normalizeText(name)));
+    // Bloqueia espaços em branco e o "Fantasma", permitindo apenas nomes reais
+    let allowedInstructors = pool.filter(name => {
+        const n = normalizeText(name || '');
+        return n.length > 1 && !n.includes('nao atribuido') && !blockedInstructors.includes(n);
+    });
     if (isTecnica) {
         allowedInstructors = allowedInstructors.filter(name => tecnicaWhitelist.includes(normalizeText(name)));
     }
@@ -3310,29 +3314,44 @@ useEffect(() => {
                                 
                                 let mergedData = Array.from(dataMap.values());                                
                                                            
-                                // === INTEGRACÃO AUTOMÁTICA DA IA NO UPLOAD (BLINDADA) ===
+                                // === INTEGRACÃO AUTOMÁTICA DA IA NO UPLOAD (ANTI-FANTASMA) ===
                                 try {
+                                    // 1. Cria uma lista VIP forte só com instrutores REAIS (ignora vazios)
+                                    let listaReais = new Set();
+                                    mergedData.forEach(d => {
+                                        if (d.instrutor1 && d.instrutor1.trim().length > 1) listaReais.add(d.instrutor1.trim());
+                                        if (d.instrutor2 && d.instrutor2.trim().length > 1) listaReais.add(d.instrutor2.trim());
+                                        if (d.instrutor3 && d.instrutor3.trim().length > 1) listaReais.add(d.instrutor3.trim());
+                                    });
+                                    const arrayReais = Array.from(listaReais);
+
                                     for (let i = 0; i < mergedData.length; i++) {
                                         let row = { ...mergedData[i] };
-                                        const roles = ['instrutor1', 'instrutor2', 'instrutor3'];
+                                        
+                                        // 2. Define vagas (Técnica tem 3, Aperfeiçoamento tem 2)
+                                        let roles = ['instrutor1', 'instrutor2'];
+                                        if (row.modalidade === 'Técnica') roles.push('instrutor3');
+
                                         let rowChanged = false;
 
                                         for (let role of roles) {
                                             const currentValue = String(row[role] || '').trim().toLowerCase();
                                             
-                                            // Se achar a vaga em branco, aciona a IA
                                             if (currentValue === '' || currentValue.includes('nao atribuido') || currentValue === 'undefined') {
                                                 const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
-                                                const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], combinedInsts, null, mergedData);
                                                 
-                                                if (options && options.length > 0) {
+                                                // 3. Aciona a IA passando a lista de nomes reais
+                                                const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], arrayReais, null, mergedData);
+                                                
+                                                // 4. Garante que a IA não devolveu um fantasma antes de salvar
+                                                if (options && options.length > 0 && options[0].nome.trim().length > 1) {
                                                     row[role] = options[0].nome;
                                                     rowChanged = true;
                                                     if (!row.autoAssignedLogs) row.autoAssignedLogs = {};
                                                     row.autoAssignedLogs[role] = {
                                                         nome: options[0].nome,
                                                         type: 'upload-auto-fill',
-                                                        reason: `Preenchido automaticamente no upload respeitando equilíbrio e rotação.`
+                                                        reason: `Preenchido automaticamente respeitando as regras de Titânio.`
                                                     };
                                                 }
                                             }
@@ -3340,22 +3359,21 @@ useEffect(() => {
                                         if (rowChanged) mergedData[i] = row;
                                     }
                                 } catch (aiError) {
-                                    // Se a IA travar, o sistema avisa o porquê, mas não impede a importação!
-                                    console.error("Erro crítico na IA durante o upload:", aiError);
-                                    alert("⚠️ Aviso: As turmas foram carregadas, mas a IA não conseguiu preencher os instrutores devido a um erro: " + aiError.message);
+                                    console.error("Erro na IA:", aiError);
+                                    alert("⚠️ Erro na IA: " + aiError.message);
                                 }
 
                                 // Purifica contra Erro 400 do Firebase e salva
                                 mergedData = JSON.parse(JSON.stringify(mergedData));
-                                const newLogs = addLog("Importação IA", "Lote", "Inteligente", `${newOrUpdatedCount} turmas processadas.`);
+                                const newLogs = addLog("Importação IA", "Lote", "Inteligente", `Upload processado com sucesso.`);
                                 
                                 persist(mergedData, substitutions, newLogs);
                                 setData(mergedData); 
                                 
-                                if (batchSummary.length > 0) {
+                                if (typeof batchSummary !== 'undefined' && batchSummary.length > 0) {
                                     setImportSummaryModal(batchSummary); 
                                 } else {
-                                    showNotify(`Sucesso! Turmas importadas e processadas!`, "success"); 
+                                    showNotify(`Sucesso! Turmas de Agosto preenchidas de forma inteligente pela IA!`, "success"); 
                                 }
                                 // ==============================================
                                
