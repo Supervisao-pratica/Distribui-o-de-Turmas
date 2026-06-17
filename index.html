@@ -3928,43 +3928,76 @@ useEffect(() => {
             const totalInstrutoresAtivos = dashboardInstructors.length;
             const totalAlunosGeral = dashboardInstructors.reduce((acc, inst) => acc + inst.totalAlunos, 0);
             const mediaAlunosPorInstrutor = totalInstrutoresAtivos > 0 ? Math.round(totalAlunosGeral / totalInstrutoresAtivos) : 0;
+            // === IA: PREENCHEDOR DE VAGAS EM BRANCO (BLINDADO) ===
             const autoFillEmptySlots = () => {
-            // Cria uma cópia profunda/segura do banco de dados atual
-            const updatedData = data.map(row => {
-                let updatedRow = { ...row };
-                let mudou = false;
+                if (!window.confirm("A IA vai procurar todas as turmas com instrutores em branco e preencher automaticamente. Deseja continuar?")) return;
 
-                // Se o Instrutor Atual estiver preenchido, usamos ele como referência para os vazios
-                const referencia = row.instrutorAtual || "";
+                let newData = [...data];
+                let changedCount = 0;
 
-                if (referencia) {
-                    if (!row.instrutor1 || row.instrutor1.trim() === "") {
-                        updatedRow.instrutor1 = referencia;
-                        mudou = true;
+                // 1. Cria a "Lista VIP" pegando apenas os nomes de pessoas REAIS da base
+                let listaReais = new Set();
+                newData.forEach(d => {
+                    if (d.instrutor1 && d.instrutor1.trim().length > 1) listaReais.add(d.instrutor1.trim());
+                    if (d.instrutor2 && d.instrutor2.trim().length > 1) listaReais.add(d.instrutor2.trim());
+                    if (d.instrutor3 && d.instrutor3.trim().length > 1) listaReais.add(d.instrutor3.trim());
+                });
+                const arrayReais = Array.from(listaReais);
+
+                if (arrayReais.length === 0) {
+                    alert("⚠️ Erro: O sistema não encontrou nenhum instrutor cadastrado para usar como opção.");
+                    return;
+                }
+
+                // 2. Varre as turmas caçando vagas em branco
+                for (let i = 0; i < newData.length; i++) {
+                    let row = { ...newData[i] };
+                    let roles = ['instrutor1', 'instrutor2'];
+                    if (row.modalidade === 'Técnica') roles.push('instrutor3');
+
+                    let rowChanged = false;
+
+                    for (let role of roles) {
+                        const currentValue = String(row[role] || '').trim().toLowerCase();
+                        
+                        if (currentValue === '' || currentValue.includes('nao atribuido') || currentValue === 'undefined') {
+                            const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
+                            
+                            // 3. AQUI A MÁGICA ACONTECE: Aciona a IA forçando ela a escolher apenas da Lista VIP
+                            const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], arrayReais, null, newData);
+                            
+                            // 4. Se a IA achou alguém e não é um fantasma, preenche!
+                            if (options && options.length > 0 && options[0].nome.trim().length > 1) {
+                                row[role] = options[0].nome;
+                                rowChanged = true;
+                                changedCount++;
+                                
+                                if (!row.autoAssignedLogs) row.autoAssignedLogs = {};
+                                row.autoAssignedLogs[role] = {
+                                    nome: options[0].nome,
+                                    type: 'auto-fill',
+                                    reason: `Vaga preenchida pela IA via botão.`
+                                };
+                            }
+                        }
                     }
-                    if (!row.instrutor2 || row.instrutor2.trim() === "") {
-                        updatedRow.instrutor2 = referencia;
-                        mudou = true;
-                    }
-                    if (!row.instrutor3 || row.instrutor3.trim() === "") {
-                        updatedRow.instrutor3 = referencia;
-                        mudou = true;
+
+                    if (rowChanged) {
+                        newData[i] = row;
                     }
                 }
 
-                // Se mudou algo, adicionamos um log ou apenas retornamos a linha modificada
-                return updatedRow;
-            });
-
-            // Atualiza o estado do React com os novos dados preenchidos
-            setData(updatedData);
-            
-            // Alerta opcional para notificar o usuário do sucesso
-            if (typeof showNotify === 'function') {
-                showNotify("Campos vazios preenchidos com o Instrutor Atual!", "success");
-            } else {
-                alert("Campos vazios preenchidos com sucesso!");
-            }
+                // 5. Salva no banco de dados e força a tela a atualizar na mesma hora
+                if (changedCount > 0) {
+                    newData = JSON.parse(JSON.stringify(newData)); // Purificador anti-erro do Firebase
+                    const finalLogs = addLog("IA: Preenchimento", "SISTEMA", "Múltiplas", `Foram preenchidas ${changedCount} vagas vazias via botão.`);
+                    persist(newData, substitutions, finalLogs);
+                    setData(newData); // Atualiza a interface
+                    alert(`✅ Sucesso Absoluto! A IA preencheu ${changedCount} vagas vazias com instrutores reais.`);
+                } else {
+                    alert("✅ Nenhuma vaga em branco precisava ser preenchida (ou já estão todas alocadas).");
+                }
+            };
         };
             // === O DESENHO DO SISTEMA COMEÇA AQUI ===
             return (
