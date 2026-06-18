@@ -981,77 +981,86 @@ if (!info || info.status === 'Finalizado' || info.status === 'Agendado') return;
 
     const availableStats = Object.values(stats).filter(i => !normalizedExcludes.includes(normalizeText(i.nome)));
     
-    const minLoadCurrent = availableStats.length > 0 ? Math.min(...availableStats.map(i => i.totalAlunos)) : 0;
-    const minTurmasCurrent = availableStats.length > 0 ? Math.min(...availableStats.map(i => i.totalTurmas)) : 0;
+    // === NOVA LÓGICA: GRAVIDADE DA MÉDIA GLOBAL ===
+    const totalInsts = availableStats.length;
+    const somaAlunos = availableStats.reduce((acc, i) => acc + i.totalAlunos, 0);
+    const somaTurmas = availableStats.reduce((acc, i) => acc + i.totalTurmas, 0);
+    
+    // Descobre a média exata de alunos e turmas da equipe
+    const mediaAlunos = totalInsts > 0 ? somaAlunos / totalInsts : 0;
+    const mediaTurmas = totalInsts > 0 ? somaTurmas / totalInsts : 0;
 
     return availableStats.map(inst => {
-        let score = inst.totalAlunos; 
+        // A pontuação base agora é a distância do instrutor para a média. 
+        // Zero é perfeito. Negativo é prioridade. Positivo vai pro fim da fila.
+        let score = inst.totalAlunos - mediaAlunos; 
+        
         let tip = `[${inst.totalAlunos} Alunos | ${inst.totalTurmas} Turmas]`;
         let type = "good";
         let emoji = "✅";
         let flags = [];
 
-        // ==========================================
-        // 1º REGRA DE TITÂNIO: MÍNIMO DE 200 ALUNOS
-        // ==========================================
+        // 1º REGRA (PISO DE PROTEÇÃO): Forte prioridade para não deixar ninguém abaixo de 200
         if (inst.totalAlunos < BALANCE_LIMITS.min) {
-            score -= 5000000;
+            score -= 100000; // Puxa o instrutor urgentemente para o topo da lista
             emoji = "🚀";
-            flags.push(`🚀 Urgente: < ${BALANCE_LIMITS.min} Alunos`);
+            flags.push(`🚀 Piso: < ${BALANCE_LIMITS.min} Alunos`);
         }
 
-        // ==========================================
-        // 2º REGRA DE TITÂNIO: GAP MÁXIMO DE 40 ALUNOS
-        // ==========================================
-        if ((inst.totalAlunos + 25) > minLoadCurrent + BALANCE_LIMITS.maxGap) {
-            score += 8000000;
-            if(emoji === "✅" || emoji === "🚀") emoji = "✋"; type = "warning";
-            flags.push(`✋ Teto de Gap de Alunos`);
+        // 2º REGRA (ELASTICIDADE DE ALUNOS): Atração magnética para a Média
+        if (inst.totalAlunos > mediaAlunos) {
+            // Sofre uma penalidade suave progressiva (quanto mais distante da média, menos recebe turmas)
+            const diff = inst.totalAlunos - mediaAlunos;
+            score += diff * 200; 
+            if (diff > 20) {
+                if(emoji === "✅") emoji = "🟡"; type = "warning";
+                flags.push(`🟡 Acima da Média`);
+            }
+        } else if (inst.totalAlunos < mediaAlunos) {
+            // Ganha bônus progressivo para subir até alcançar a média
+            const diff = mediaAlunos - inst.totalAlunos;
+            score -= diff * 200;
         }
 
-        // ==========================================
-        // 3º REGRA DE TITÂNIO: EQUILÍBRIO DE TURMAS
-        // ==========================================
-        if (inst.totalTurmas >= minTurmasCurrent + BALANCE_LIMITS.maxTurmasGap) {
-            score += 4000000;
-            if(emoji === "✅" || emoji === "🚀") emoji = "⚖️"; type = "warning";
-            flags.push(`⚖️ Teto de Turmas`);
-        } else if (inst.totalTurmas === minTurmasCurrent) {
-            score -= 600000;
-            flags.push(`⭐ Prioridade: Menos Turmas`);
+        // 3º REGRA (ELASTICIDADE DE TURMAS): Atração magnética para a Média de Turmas
+        if (inst.totalTurmas > mediaTurmas) {
+            const diffTurmas = inst.totalTurmas - mediaTurmas;
+            score += diffTurmas * 3000; // Penalidade flexível por ter mais turmas que a média
+            if (diffTurmas >= 1.5) {
+                if(emoji === "✅" || emoji === "🟡") emoji = "⚖️"; type = "warning";
+                flags.push(`⚖️ Acima da Média de Turmas`);
+            }
+        } else if (inst.totalTurmas < mediaTurmas) {
+            const diffTurmas = mediaTurmas - inst.totalTurmas;
+            score -= diffTurmas * 3000; 
+            flags.push(`⭐ Poucas Turmas`);
         }
 
-        // ==========================================
-        // 4º REGRA (NOVA): ROTAÇÃO PARA INSTRUTOR 1
-        // ==========================================
+        // 4º REGRA: ROTAÇÃO PARA INSTRUTOR 1 (Forçar variação)
         if (slotType === 'instrutor1') {
-            // A IA agora soma 150 mil pontos de penalidade para cada vez que ele já for Instrutor 1.
-            // Isso obriga o sistema a escolher outras pessoas para o cargo principal!
-            score += inst.countAsInst1 * 150000;
-            flags.push(`🔄 Rotação P1 (${inst.countAsInst1}x)`);
+            score += inst.countAsInst1 * 15000;
+            if (inst.countAsInst1 > 0) flags.push(`🔄 Rotação P1 (${inst.countAsInst1}x)`);
         }
 
-        // Regras de Especialidade
+        // Regras de Especialidade / Diversificação
         if (inst.turmasDoCurso >= 3) {
-            score += 3000; 
-            emoji = "⚠️"; type = "warning";
-            flags.push(`⚠️ Concentração (${inst.turmasDoCurso}x)`);
+            score += 5000; 
+            if(emoji !== "🚀") { emoji = "⚠️"; type = "warning"; }
+            flags.push(`⚠️ Concentração (${inst.turmasDoCurso}x no curso)`);
         } else if (inst.turmasDoCurso >= 2) {
-            score += 500;
+            score += 1000;
         } else if (inst.turmasDoCurso === 0) {
-            score -= 100; 
+            score -= 500; 
             flags.push(`⭐ Novo no Curso`);
         }
 
+        // TETO OPERACIONAL ABSOLUTO (Proteção final contra Burnout)
         if (inst.totalAlunos >= BALANCE_LIMITS.hardMax) {
-            score += 20000000; emoji = "🔴"; type = "bad"; 
-            flags.push(`🔴 Limite Operacional`);
+            score += 5000000; emoji = "🔴"; type = "bad"; 
+            flags.push(`🔴 Limite Operacional Crítico`);
         } else if (inst.totalAlunos >= BALANCE_LIMITS.max) {
             score += 50000; emoji = "🔴"; type = "bad"; 
             flags.push(`🔴 Carga Máxima`);
-        } else if (inst.totalAlunos >= BALANCE_LIMITS.min + BALANCE_LIMITS.maxGap) {
-            score += 1000; if(emoji === "✅" || emoji === "⭐") emoji = "🟡"; type = "warning"; 
-            flags.push(`🟡 Carga Alta`);
         }
 
         if (flags.length > 0) tip += " - " + flags.join(" | ");
