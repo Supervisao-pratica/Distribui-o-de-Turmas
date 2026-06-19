@@ -3321,11 +3321,19 @@ useEffect(() => {
                                     newOrUpdatedCount++;
                                 });
                                 
-                                let mergedData = Array.from(dataMap.values());                                
-                                                           
-                                // === INTEGRACÃO AUTOMÁTICA DA IA NO UPLOAD (ANTI-FANTASMA) ===
+                                let mergedData = Array.from(dataMap.values());
+                                
+                                // === INTEGRAÇÃO AUTOMÁTICA DA IA NO UPLOAD (REGRAS CRONOLÓGICAS ESTRITAS) ===
                                 try {
-                                    // 1. Cria uma lista VIP forte só com instrutores REAIS (ignora vazios)
+                                    const parseSecureDate = (str) => {
+                                        if (!str) return null;
+                                        const parts = String(str).split('/');
+                                        if (parts.length === 3) {
+                                            return new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00`);
+                                        }
+                                        return new Date(str + 'T00:00:00');
+                                    };
+
                                     let listaReais = new Set();
                                     mergedData.forEach(d => {
                                         if (d.instrutor1 && d.instrutor1.trim().length > 1) listaReais.add(d.instrutor1.trim());
@@ -3333,48 +3341,59 @@ useEffect(() => {
                                         if (d.instrutor3 && d.instrutor3.trim().length > 1) listaReais.add(d.instrutor3.trim());
                                     });
                                     const arrayReais = Array.from(listaReais);
+                                    const dataAlvoOtimizacao = parseSecureDate(viewDate) || new Date();
 
                                     for (let i = 0; i < mergedData.length; i++) {
                                         let row = { ...mergedData[i] };
-                                        
-                                        // 2. Define vagas (Técnica tem 3, Aperfeiçoamento tem 2)
-                                        let roles = ['instrutor1', 'instrutor2'];
-                                        if (row.modalidade === 'Técnica') roles.push('instrutor3');
-
                                         let rowChanged = false;
 
+                                        let roles = ['instrutor1', 'instrutor2'];
+                                        if (row.modalidade === 'Técnica') roles = ['instrutor1', 'instrutor2', 'instrutor3'];
+
+                                        // Preenche os slots vazios da cadeia docente
                                         for (let role of roles) {
                                             const currentValue = String(row[role] || '').trim().toLowerCase();
-                                            
                                             if (currentValue === '' || currentValue.includes('nao atribuido') || currentValue === 'undefined') {
                                                 const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
-                                                
-                                                // 3. Aciona a IA passando a lista de nomes reais
                                                 const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], arrayReais, null, mergedData);
                                                 
-                                                // 4. Garante que a IA não devolveu um fantasma antes de salvar
                                                 if (options && options.length > 0 && options[0].nome.trim().length > 1) {
                                                     row[role] = options[0].nome;
                                                     rowChanged = true;
-                                                    if (!row.autoAssignedLogs) row.autoAssignedLogs = {};
-                                                    row.autoAssignedLogs[role] = {
-                                                        nome: options[0].nome,
-                                                        type: 'upload-auto-fill',
-                                                        reason: `Preenchido automaticamente respeitando as regras de Titânio.`
-                                                    };
                                                 }
                                             }
                                         }
+
+                                        // BLOQUEIO SUPREMO: Se veio preenchido do Excel, NUNCA altera o instrutorAtual
+                                        const currentInstVal = String(row.instrutorAtual || '').trim();
+                                        if (currentInstVal === '' || currentInstVal.toLowerCase().includes('nao atribuido')) {
+                                            const dInicio = parseSecureDate(row.inicio);
+                                            const dTrans1 = parseSecureDate(row.dataTransferencia);
+                                            const dTrans2 = parseSecureDate(row.dataTransferencia2);
+
+                                            let correto = row.instrutor1;
+
+                                            if (row.modalidade === 'Técnica') {
+                                                if (dTrans1 && dataAlvoOtimizacao >= dTrans1) correto = row.instrutor2;
+                                                if (dTrans2 && dataAlvoOtimizacao >= dTrans2) correto = row.instrutor3;
+                                            } else {
+                                                if (dTrans1 && dataAlvoOtimizacao >= dTrans1) correto = row.instrutor2;
+                                            }
+
+                                            if (correto && row.instrutorAtual !== correto) {
+                                                row.instrutorAtual = correto;
+                                                rowChanged = true;
+                                            }
+                                        }
+
                                         if (rowChanged) mergedData[i] = row;
                                     }
                                 } catch (aiError) {
-                                    console.error("Erro na IA:", aiError);
-                                    alert("⚠️ Erro na IA: " + aiError.message);
+                                    console.error("Erro na validação de cronograma da IA:", aiError);
                                 }
 
-                                // Purifica contra Erro 400 do Firebase e salva
                                 mergedData = JSON.parse(JSON.stringify(mergedData));
-                                const newLogs = addLog("Importação IA", "Lote", "Inteligente", `Upload processado com sucesso.`);
+                                const newLogs = addLog("Importação IA", "Lote", "Inteligente", `${newOrUpdatedCount} turmas processadas.`);
                                 
                                 persist(mergedData, substitutions, newLogs);
                                 setData(mergedData); 
@@ -3382,9 +3401,9 @@ useEffect(() => {
                                 if (typeof batchSummary !== 'undefined' && batchSummary.length > 0) {
                                     setImportSummaryModal(batchSummary); 
                                 } else {
-                                    showNotify(`Sucesso! Turmas de Agosto preenchidas de forma inteligente pela IA!`, "success"); 
+                                    showNotify(`Sucesso! Planilha carregada e alinhada com as regras de transferência cronológica!`, "success"); 
                                 }
-                                // ==============================================
+                                // ============================================================================
                                
                             }
                         }
@@ -3938,75 +3957,102 @@ useEffect(() => {
             const totalAlunosGeral = dashboardInstructors.reduce((acc, inst) => acc + inst.totalAlunos, 0);
             const mediaAlunosPorInstrutor = totalInstrutoresAtivos > 0 ? Math.round(totalAlunosGeral / totalInstrutoresAtivos) : 0;
             // === IA: PREENCHEDOR DE VAGAS EM BRANCO (BLINDADO) ===
-            const autoFillEmptySlots = () => {
-                if (!window.confirm("A IA vai procurar todas as turmas com instrutores em branco e preencher automaticamente. Deseja continuar?")) return;
+            // === IA: PREENCHEDOR DE VAGAS EM BRANCO COM CRONOGRAMA ESTRITO ===
+const autoFillEmptySlots = () => {
+    if (!window.confirm("A IA vai preencher as vagas em branco respeitando estritamente a linha do tempo e mantendo intactos os instrutores atuais vindos da planilha. Deseja continuar?")) return;
 
-                let newData = [...data];
-                let changedCount = 0;
+    let newData = [...data];
+    let changedCount = 0;
 
-                // 1. Cria a "Lista VIP" pegando apenas os nomes de pessoas REAIS da base
-                let listaReais = new Set();
-                newData.forEach(d => {
-                    if (d.instrutor1 && d.instrutor1.trim().length > 1) listaReais.add(d.instrutor1.trim());
-                    if (d.instrutor2 && d.instrutor2.trim().length > 1) listaReais.add(d.instrutor2.trim());
-                    if (d.instrutor3 && d.instrutor3.trim().length > 1) listaReais.add(d.instrutor3.trim());
-                });
-                const arrayReais = Array.from(listaReais);
+    // Helper para ler datas no formato DD/MM/YYYY ou YYYY-MM-DD com segurança
+    const parseSecureDate = (str) => {
+        if (!str) return null;
+        const parts = String(str).split('/');
+        if (parts.length === 3) {
+            return new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00`);
+        }
+        return new Date(str + 'T00:00:00');
+    };
 
-                if (arrayReais.length === 0) {
-                    alert("⚠️ Erro: O sistema não encontrou nenhum instrutor cadastrado para usar como opção.");
-                    return;
+    // 1. Coleta apenas instrutores reais ativos na base
+    let listaReais = new Set();
+    newData.forEach(d => {
+        if (d.instrutor1 && d.instrutor1.trim().length > 1) listaReais.add(d.instrutor1.trim());
+        if (d.instrutor2 && d.instrutor2.trim().length > 1) listaReais.add(d.instrutor2.trim());
+        if (d.instrutor3 && d.instrutor3.trim().length > 1) listaReais.add(d.instrutor3.trim());
+    });
+    const arrayReais = Array.from(listaReais);
+
+    const dataAlvoOtimizacao = parseSecureDate(viewDate) || new Date();
+
+    // 2. Processa cada turma de forma isolada e estrita
+    for (let i = 0; i < newData.length; i++) {
+        let row = { ...newData[i] };
+        let rowChanged = false;
+
+        // Determina os papéis da cadeia com base na modalidade
+        let roles = ['instrutor1', 'instrutor2'];
+        if (row.modalidade === 'Técnica') {
+            roles = ['instrutor1', 'instrutor2', 'instrutor3'];
+        }
+
+        // Preenche sequencialmente Instrutor 1, 2 e 3
+        for (let role of roles) {
+            const val = String(row[role] || '').trim().toLowerCase();
+            if (val === '' || val.includes('nao atribuido') || val === 'undefined') {
+                const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
+                const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], arrayReais, null, newData);
+                
+                if (options && options.length > 0 && options[0].nome.trim().length > 1) {
+                    row[role] = options[0].nome;
+                    rowChanged = true;
+                    changedCount++;
                 }
+            }
+        }
 
-                // 2. Varre as turmas caçando vagas em branco
-                for (let i = 0; i < newData.length; i++) {
-                    let row = { ...newData[i] };
-                    let roles = ['instrutor1', 'instrutor2'];
-                    if (row.modalidade === 'Técnica') roles.push('instrutor3');
+        // REGRA DE OURO: Se o instrutorAtual veio preenchido, NUNCA altera ele!
+        const currentInstVal = String(row.instrutorAtual || '').trim();
+        if (currentInstVal === '' || currentInstVal.toLowerCase().includes('nao atribuido')) {
+            // Se veio VAZIO, calcula estritamente com base nas datas de transferência
+            const dInicio = parseSecureDate(row.inicio);
+            const dTrans1 = parseSecureDate(row.dataTransferencia);
+            const dTrans2 = parseSecureDate(row.dataTransferencia2);
 
-                    let rowChanged = false;
+            let correto = row.instrutor1; // Padrão é o 1
 
-                    for (let role of roles) {
-                        const currentValue = String(row[role] || '').trim().toLowerCase();
-                        
-                        if (currentValue === '' || currentValue.includes('nao atribuido') || currentValue === 'undefined') {
-                            const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
-                            
-                            // 3. AQUI A MÁGICA ACONTECE: Aciona a IA forçando ela a escolher apenas da Lista VIP
-                            const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], arrayReais, null, newData);
-                            
-                            // 4. Se a IA achou alguém e não é um fantasma, preenche!
-                            if (options && options.length > 0 && options[0].nome.trim().length > 1) {
-                                row[role] = options[0].nome;
-                                rowChanged = true;
-                                changedCount++;
-                                
-                                if (!row.autoAssignedLogs) row.autoAssignedLogs = {};
-                                row.autoAssignedLogs[role] = {
-                                    nome: options[0].nome,
-                                    type: 'auto-fill',
-                                    reason: `Vaga preenchida pela IA via botão.`
-                                };
-                            }
-                        }
-                    }
-
-                    if (rowChanged) {
-                        newData[i] = row;
-                    }
+            if (row.modalidade === 'Técnica') {
+                if (dTrans1 && dataAlvoOtimizacao >= dTrans1) {
+                    correto = row.instrutor2;
                 }
-
-                // 5. Salva no banco de dados e força a tela a atualizar na mesma hora
-                if (changedCount > 0) {
-                    newData = JSON.parse(JSON.stringify(newData)); // Purificador anti-erro do Firebase
-                    const finalLogs = addLog("IA: Preenchimento", "SISTEMA", "Múltiplas", `Foram preenchidas ${changedCount} vagas vazias via botão.`);
-                    persist(newData, substitutions, finalLogs);
-                    setData(newData); // Atualiza a interface
-                    alert(`✅ Sucesso Absoluto! A IA preencheu ${changedCount} vagas vazias com instrutores reais.`);
-                } else {
-                    alert("✅ Nenhuma vaga em branco precisava ser preenchida (ou já estão todas alocadas).");
+                if (dTrans2 && dataAlvoOtimizacao >= dTrans2) {
+                    correto = row.instrutor3;
                 }
-            };
+            } else {
+                // Aperfeiçoamento (Apenas uma transferência)
+                if (dTrans1 && dataAlvoOtimizacao >= dTrans1) {
+                    correto = row.instrutor2;
+                }
+            }
+
+            if (correto && row.instrutorAtual !== correto) {
+                row.instrutorAtual = correto;
+                rowChanged = true;
+            }
+        }
+
+        if (rowChanged) newData[i] = row;
+    }
+
+    if (changedCount > 0 || newData !== data) {
+        newData = JSON.parse(JSON.stringify(newData));
+        persist(newData, substitutions, addLog("IA: Linha do Tempo", "SISTEMA", "Múltiplas", "Ajuste estrito de cadeia docente realizado."));
+        setData(newData);
+        alert(`✅ Processamento concluído com sucesso!`);
+    } else {
+        alert("✅ Todos os dados já estão em conformidade com as regras cronológicas.");
+    }
+};
                     // === O DESENHO DO SISTEMA COMEÇA AQUI ===
             return (
                 <div className="min-h-screen bg-slate-100 flex flex-col pb-10">
