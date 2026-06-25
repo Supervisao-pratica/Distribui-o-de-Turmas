@@ -190,9 +190,7 @@
             const [error, setError] = useState('');
             const [loading, setLoading] = useState(false);
             
-            // Estado do Simulador de Equilíbrio
-    const [simulator, setSimulator] = React.useState({ isOpen: false, changes: [], newDb: [], scope: 'all', variationId: 0 });
-
+           
             const handleLogin = async (e) => {
                 e.preventDefault();
                 setLoading(true);
@@ -368,6 +366,8 @@
             const [data, setData] = useState([]);
             const [substitutions, setSubstitutions] = useState([]);
             const [logs, setLogs] = useState([]);
+            // Estado do Simulador de Equilíbrio (Instalado no lugar certo!)
+            const [simulator, setSimulator] = useState({ isOpen: false, changes: [], newDb: [], scope: 'all', variationId: 0 });
             const [isSaving, setIsSaving] = useState(false);
             const [lastSaved, setLastSaved] = useState(null);
             const [viewDate, setViewDate] = useState(new Date().toISOString().split('T')[0]);
