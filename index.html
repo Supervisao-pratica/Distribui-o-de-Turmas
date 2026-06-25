@@ -3323,7 +3323,7 @@ useEffect(() => {
                                 
                                 let mergedData = Array.from(dataMap.values());
                                 
-                                // === INTEGRAÇÃO AUTOMÁTICA DA IA NO UPLOAD (CRONOLOGIA PERFEITA) ===
+                                // === INTEGRAÇÃO AUTOMÁTICA NO UPLOAD (COM OPÇÃO DE ESCOLHA) ===
                                 try {
                                     const parseSecureDate = (str) => {
                                         if (!str) return null;
@@ -3331,6 +3331,9 @@ useEffect(() => {
                                         if (parts.length === 3) return new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00`);
                                         return new Date(str + 'T00:00:00');
                                     };
+
+                                    // 1. A PERGUNTA CRUCIAL PARA O USUÁRIO
+                                    const usarIA = window.confirm("Deseja realizar uma Nova Distribuição com a IA?\n\n[OK] = A IA vai preencher os instrutores em branco.\n[CANCELAR] = Manter a base offline intacta (mantém os vazios como vieram).");
 
                                     let listaReais = new Set();
                                     mergedData.forEach(d => {
@@ -3351,45 +3354,42 @@ useEffect(() => {
                                         let roles = ['instrutor1', 'instrutor2'];
                                         if (row.modalidade === 'Técnica') roles = ['instrutor1', 'instrutor2', 'instrutor3'];
 
-                                        const currentInstVal = String(row.instrutorAtual || '').trim();
-                                        const isAtualVazio = currentInstVal === '' || currentInstVal.toLowerCase().includes('nao atribuido') || currentInstVal === 'undefined';
-
-                                        // 1. DESCOBRE EM QUAL FASE ESTAMOS HOJE
-                                        const dTrans1 = parseSecureDate(row.dataTransferencia);
-                                        const dTrans2 = parseSecureDate(row.dataTransferencia2);
-                                        let papelAtualDaLinhaDoTempo = 'instrutor1';
-
-                                        if (row.modalidade === 'Técnica') {
-                                            if (dTrans1 && dataAlvoOtimizacao >= dTrans1) papelAtualDaLinhaDoTempo = 'instrutor2';
-                                            if (dTrans2 && dataAlvoOtimizacao >= dTrans2) papelAtualDaLinhaDoTempo = 'instrutor3';
-                                        } else {
-                                            if (dTrans1 && dataAlvoOtimizacao >= dTrans1) papelAtualDaLinhaDoTempo = 'instrutor2';
-                                        }
-
-                                        // 2. SE O INSTRUTOR ATUAL VEIO NA PLANILHA, ELE ASSUME A CADEIRA DA FASE DE HOJE ANTES DA IA
-                                        if (!isAtualVazio) {
-                                            if (!row[papelAtualDaLinhaDoTempo] || String(row[papelAtualDaLinhaDoTempo]).trim() === '') {
-                                                row[papelAtualDaLinhaDoTempo] = currentInstVal;
-                                                rowChanged = true;
-                                            }
-                                        }
-
-                                        // 3. AGORA A IA ENTRA E PREENCHE SÓ O QUE SOBROU (Ex: o Instrutor 3 do futuro)
-                                        for (let role of roles) {
-                                            const currentValue = String(row[role] || '').trim().toLowerCase();
-                                            if (currentValue === '' || currentValue.includes('nao atribuido') || currentValue === 'undefined') {
-                                                const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
-                                                const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], arrayReais, null, mergedData);
-                                                
-                                                if (options && options.length > 0 && options[0].nome.trim().length > 1) {
-                                                    row[role] = options[0].nome;
-                                                    rowChanged = true;
+                                        // 2. SÓ ACIONA A IA SE VOCÊ DEU "OK" NA PERGUNTA
+                                        if (usarIA) {
+                                            for (let role of roles) {
+                                                const currentValue = String(row[role] || '').trim().toLowerCase();
+                                                if (currentValue === '' || currentValue.includes('nao atribuido') || currentValue === 'undefined') {
+                                                    const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
+                                                    const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], arrayReais, null, mergedData);
+                                                    
+                                                    if (options && options.length > 0 && options[0].nome.trim().length > 1) {
+                                                        row[role] = options[0].nome;
+                                                        rowChanged = true;
+                                                    }
                                                 }
                                             }
                                         }
 
-                                        // 4. SE A PLANILHA VEIO SEM INSTRUTOR ATUAL, DEFINIMOS ELE COM BASE EM QUEM A IA ESCOLHEU PARA A FASE DE HOJE
+                                        // 3. REGRA DO INSTRUTOR ATUAL (Sempre roda, independente da IA)
+                                        // Garante que o painel mostre o instrutor correto baseado nas datas de passagem
+                                        const currentInstVal = String(row.instrutorAtual || '').trim();
+                                        const isAtualVazio = currentInstVal === '' || currentInstVal.toLowerCase().includes('nao atribuido') || currentInstVal === 'undefined';
+
                                         if (isAtualVazio) {
+                                            const dTrans1 = parseSecureDate(row.dataTransferencia);
+                                            const dTrans2 = parseSecureDate(row.dataTransferencia2);
+
+                                            let papelAtualDaLinhaDoTempo = 'instrutor1';
+
+                                            if (row.modalidade === 'Técnica') {
+                                                if (dTrans1 && dataAlvoOtimizacao >= dTrans1) papelAtualDaLinhaDoTempo = 'instrutor2';
+                                                if (dTrans2 && dataAlvoOtimizacao >= dTrans2) papelAtualDaLinhaDoTempo = 'instrutor3';
+                                            } else {
+                                                // Turmas de Aperfeiçoamento (1 passagem)
+                                                if (dTrans1 && dataAlvoOtimizacao >= dTrans1) papelAtualDaLinhaDoTempo = 'instrutor2';
+                                            }
+
+                                            // Copia o nome de quem deveria estar regendo a turma hoje para o "Instrutor Atual"
                                             if (row[papelAtualDaLinhaDoTempo] && row.instrutorAtual !== row[papelAtualDaLinhaDoTempo]) {
                                                 row.instrutorAtual = row[papelAtualDaLinhaDoTempo];
                                                 rowChanged = true;
@@ -3399,11 +3399,11 @@ useEffect(() => {
                                         if (rowChanged) mergedData[i] = row;
                                     }
                                 } catch (aiError) {
-                                    console.error("Erro no processamento estrito da IA:", aiError);
+                                    console.error("Erro na validação do upload:", aiError);
                                 }
 
                                 mergedData = JSON.parse(JSON.stringify(mergedData));
-                                const newLogs = addLog("Importação IA", "Lote", "Inteligente", `${newOrUpdatedCount} turmas processadas.`);
+                                const newLogs = addLog("Importação", "Lote", "Inteligente", `${newOrUpdatedCount} turmas carregadas.`);
                                 
                                 persist(mergedData, substitutions, newLogs);
                                 setData(mergedData); 
@@ -3411,7 +3411,7 @@ useEffect(() => {
                                 if (typeof batchSummary !== 'undefined' && batchSummary.length > 0) {
                                     setImportSummaryModal(batchSummary); 
                                 } else {
-                                    showNotify(`Sucesso! Planilha carregada. O cronograma foi respeitado e o Instrutor Atual determinou as vagas preenchidas pela IA!`, "success"); 
+                                    showNotify(`Sucesso! Planilha processada e o Instrutor Atual foi sincronizado com as datas de passagem!`, "success"); 
                                 }
                                 // ============================================================================
                                
