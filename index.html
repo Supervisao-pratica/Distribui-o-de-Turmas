@@ -2341,10 +2341,16 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
     return { rows: newRows, moves, remainingIssues };
 };
 
-// === IA: SIMULADOR DE CENÁRIOS DE EQUILÍBRIO ===
+// === IA: SIMULADOR DE CENÁRIOS DE EQUILÍBRIO AVANÇADO (VISUAL COMPLETO) ===
             const openSimulator = (scopeToUse = 'all', isNewScenario = false) => {
-                let tempDb = JSON.parse(JSON.stringify(data)); // Cópia segura para simular sem afetar o real
-                let changesLog = [];
+                if (!data || data.length === 0) {
+                    alert("Não há turmas na base de dados para simular.");
+                    return;
+                }
+
+                let tempDb = JSON.parse(JSON.stringify(data)); // Cópia segura em standby
+                let simulatedClasses = [];
+                let totalAlocacoesModificadas = 0;
                 
                 const parseSecureDate = (str) => {
                     if (!str) return null;
@@ -2357,92 +2363,131 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                 const mesAlvo = dataAlvoOtimizacao.getMonth();
                 const anoAlvo = dataAlvoOtimizacao.getFullYear();
 
+                // Coleta todos os instrutores ativos reais
                 let listaReais = new Set();
                 tempDb.forEach(d => {
                     if (d.instrutor1 && d.instrutor1.trim().length > 1) listaReais.add(d.instrutor1.trim());
                     if (d.instrutor2 && d.instrutor2.trim().length > 1) listaReais.add(d.instrutor2.trim());
                     if (d.instrutor3 && d.instrutor3.trim().length > 1) listaReais.add(d.instrutor3.trim());
-                    if (d.instrutorAtual && d.instrutorAtual.trim().length > 1 && !d.instrutorAtual.toLowerCase().includes('nao atribuido')) listaReais.add(d.instrutorAtual.trim());
+                    if (d.instrutorAtual && d.instrutorAtual.trim().length > 1 && !d.instrutorAtual.toLowerCase().includes('nao atribuido')) {
+                        listaReais.add(d.instrutorAtual.trim());
+                    }
                 });
                 
                 let arrayReais = Array.from(listaReais);
 
-                // SE FOR "NOVO CENÁRIO": Embaralha levemente a ordem da equipe para gerar desempates diferentes e criar uma nova proposta!
+                // Se acionado "Gerar Novo Cenário", rotaciona levemente a fila de desempates
                 if (isNewScenario) {
                     arrayReais.sort(() => Math.random() - 0.5);
                 }
 
-                // Varredura da Simulação
+                // Processa a simulação linear de toda a base
                 for (let i = 0; i < tempDb.length; i++) {
                     let row = tempDb[i];
                     
-                    // FILTRO DE ESCOPO (Mês Atual ou Todos os Meses)
-                    if (scopeToUse === 'filtered') {
-                        const dInicio = parseSecureDate(row.inicio);
-                        if (dInicio && (dInicio.getMonth() !== mesAlvo || dInicio.getFullYear() !== anoAlvo)) {
-                            continue; // Ignora as turmas fora do mês filtrado
-                        }
+                    // Tratamento do filtro de escopo cronológico
+                    const dInicio = parseSecureDate(row.inicio);
+                    const pertenceAoMesFiltrado = dInicio && dInicio.getMonth() === mesAlvo && dInicio.getFullYear() === anoAlvo;
+                    
+                    if (scopeToUse === 'filtered' && !pertenceAoMesFiltrado) {
+                        continue; // Pula turmas que não pertencem ao mês ativo
                     }
 
-                    // Guarda o estado "Antes" para mostrar na tela
+                    // Backup do estado vindo da planilha
                     const estadoAnterior = {
-                        i1: row.instrutor1 || 'Vazio',
-                        i2: row.instrutor2 || 'Vazio',
-                        i3: row.instrutor3 || 'Vazio'
+                        i1: row.instrutor1 || 'Não Atribuído',
+                        i2: row.instrutor2 || 'Não Atribuído',
+                        i3: row.instrutor3 || 'Não Atribuído',
+                        atual: row.instrutorAtual || 'Não Atribuído'
                     };
 
                     let roles = ['instrutor1', 'instrutor2'];
                     if (row.modalidade === 'Técnica') roles = ['instrutor1', 'instrutor2', 'instrutor3'];
 
+                    const dTrans1 = parseSecureDate(row.dataTransferencia);
+                    const dTrans2 = parseSecureDate(row.dataTransferencia2);
+                    let papelAtualDaLinhaDoTempo = 'instrutor1';
+
+                    if (row.modalidade === 'Técnica') {
+                        if (dTrans1 && dataAlvoOtimizacao >= dTrans1) papelAtualDaLinhaDoTempo = 'instrutor2';
+                        if (dTrans2 && dataAlvoOtimizacao >= dTrans2) papelAtualDaLinhaDoTempo = 'instrutor3';
+                    } else {
+                        if (dTrans1 && dataAlvoOtimizacao >= dTrans1) papelAtualDaLinhaDoTempo = 'instrutor2';
+                    }
+
+                    const currentInstVal = String(row.instrutorAtual || '').trim();
+                    const isAtualPreenchido = currentInstVal !== '' && !currentInstVal.toLowerCase().includes('nao atribuido') && currentInstVal !== 'undefined';
+
+                    if (isAtualPreenchido) {
+                        row[papelAtualDaLinhaDoTempo] = currentInstVal;
+                    }
+
                     let rowChanged = false;
 
-                    // O Simulador age preenchendo vazios ou re-avaliando o futuro
                     for (let role of roles) {
-                        const val = String(row[role] || '').trim().toLowerCase();
-                        if (val === '' || val.includes('nao atribuido') || val === 'undefined') {
-                            const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
-                            const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], arrayReais, null, tempDb);
-                            
-                            if (options && options.length > 0 && options[0].nome.trim().length > 1) {
-                                row[role] = options[0].nome;
+                        if (isAtualPreenchido && role === papelAtualDaLinhaDoTempo) continue;
+
+                        const currentValue = String(row[role] || '').trim();
+                        const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
+                        
+                        const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], arrayReais, null, tempDb);
+                        
+                        if (options && options.length > 0) {
+                            const bestOption = options[0].nome;
+                            if (currentValue === '' || currentValue.toLowerCase().includes('nao atribuido') || normalizeText(currentValue) !== normalizeText(bestOption)) {
+                                row[role] = bestOption;
                                 rowChanged = true;
                             }
                         }
                     }
 
-                    if (rowChanged) {
-                        tempDb[i] = row;
-                        changesLog.push({
-                            turma: row.id || row.curso,
-                            curso: row.curso,
-                            alunos: row.alunos,
-                            antes: estadoAnterior,
-                            depois: { i1: row.instrutor1, i2: row.instrutor2, i3: row.instrutor3 }
-                        });
+                    if (!isAtualPreenchido) {
+                        if (row[papelAtualDaLinhaDoTempo] && row.instrutorAtual !== row[papelAtualDaLinhaDoTempo]) {
+                            row.instrutorAtual = row[papelAtualDaLinhaDoTempo];
+                            rowChanged = true;
+                        }
                     }
+
+                    if (rowChanged) {
+                        totalAlocacoesModificadas++;
+                        tempDb[i] = row;
+                    }
+
+                    // Adiciona na lista geral de visualização do cenário
+                    simulatedClasses.push({
+                        id: row.id || 'Sem ID',
+                        curso: row.curso,
+                        modalidade: row.modalidade,
+                        alunos: parseInt(row.alunos) || 0,
+                        inicio: row.inicio,
+                        changed: rowChanged,
+                        antes: estadoAnterior,
+                        depois: {
+                            i1: row.instrutor1 || 'Não Atribuído',
+                            i2: row.instrutor2 || 'Não Atribuído',
+                            i3: row.instrutor3 || '',
+                            atual: row.instrutorAtual || 'Não Atribuído'
+                        }
+                    });
                 }
 
-                if (changesLog.length === 0 && !isNewScenario) {
-                    alert("A IA analisou os dados e percebeu que não há nada para preencher/equilibrar neste filtro atual.");
-                    return;
-                }
-
-                // Abre a tela de pré-visualização em vez de salvar no banco
+                // Abre a janela do simulador exibindo o cenário completo em qualquer situação
                 setSimulator({
                     isOpen: true,
-                    changes: changesLog,
+                    changes: simulatedClasses,
                     newDb: tempDb,
                     scope: scopeToUse,
-                    variationId: simulator.variationId + 1
+                    variationId: (simulator.variationId || 0) + 1,
+                    totalModificadas: totalAlocacoesModificadas
                 });
             };
 
             const applySimulation = () => {
-                const logs = addLog("Simulador IA", "Lote", "Inteligente", `Cenário aprovado pelo usuário. ${simulator.changes.length} turmas equilibradas.`);
+                const logs = addLog("Simulador IA", "Lote", "Inteligente", `Cenário aprovado pelo usuário. Escopo: ${simulator.scope === 'filtered' ? 'Mês Atual' : 'Geral'}.`);
                 persist(simulator.newDb, substitutions, logs);
                 setData(simulator.newDb);
                 setSimulator({ ...simulator, isOpen: false });
-                alert("✅ Cenário aprovado e salvo no banco de dados com sucesso!");
+                showNotify("✅ Distribuição do cenário aplicada com sucesso!", "success");
             };
 
 const getBlockRolesForClass = (turma) => {
@@ -5302,76 +5347,116 @@ useEffect(() => {
                             </div>
                         </div>
                     )}
-                 {/* COLAR O PASSO 3 AQUI: TELA DO SIMULADOR DE CENÁRIOS IA */}
+                 {/* TELA DO SIMULADOR DE CENÁRIOS IA AVANÇADO */}
                     {simulator.isOpen && (
-                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
-                                {/* Cabeçalho do Simulador */}
-                                <div className="bg-indigo-600 p-4 text-white flex justify-between items-center">
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
+                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden border border-slate-200">
+                                
+                                {/* Cabeçalho Superior Premium */}
+                                <div className="bg-gradient-to-r from-slate-800 to-indigo-900 p-5 text-white flex justify-between items-center shadow-md">
                                     <div className="flex items-center gap-3">
-                                        <Icons.Robot className="w-8 h-8" />
+                                        <div className="p-2 bg-white/10 rounded-xl">
+                                            <Icons.Robot className="w-8 h-8 text-indigo-300" />
+                                        </div>
                                         <div>
-                                            <h2 className="text-xl font-bold">Simulador de Cenários IA</h2>
-                                            <p className="text-indigo-200 text-xs">Pré-visualização do equilíbrio sugerido</p>
+                                            <h2 className="text-xl font-bold tracking-tight">Simulador de Distribuição e Equilíbrio</h2>
+                                            <p className="text-slate-300 text-xs font-medium">Avaliação analítica de cenários da cadeia docente</p>
                                         </div>
                                     </div>
-                                    <div className="flex gap-2">
-                                        <button onClick={() => openSimulator('filtered', false)} className={`px-3 py-1 text-xs font-bold rounded ${simulator.scope === 'filtered' ? 'bg-white text-indigo-700' : 'bg-indigo-800 text-indigo-200 hover:bg-indigo-700'}`}>Mês Atual</button>
-                                        <button onClick={() => openSimulator('all', false)} className={`px-3 py-1 text-xs font-bold rounded ${simulator.scope === 'all' ? 'bg-white text-indigo-700' : 'bg-indigo-800 text-indigo-200 hover:bg-indigo-700'}`}>Todos os Meses</button>
-                                    </div>
-                                </div>
-
-                                {/* Corpo: Lista de Mudanças */}
-                                <div className="p-6 flex-1 overflow-y-auto bg-slate-50">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <h3 className="font-bold text-slate-700">Mudanças Sugeridas ({simulator.changes.length} turmas afetadas):</h3>
-                                        <button onClick={() => openSimulator(simulator.scope, true)} className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm rounded-lg flex items-center gap-2 shadow-sm transition">
-                                            <Icons.Refresh className="w-4 h-4" /> Gerar Novo Cenário
+                                    
+                                    {/* Controle Interativo de Escopo Interno */}
+                                    <div className="flex items-center bg-slate-900/40 p-1 rounded-xl border border-white/10 gap-1">
+                                        <button onClick={() => openSimulator('filtered', false)} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${simulator.scope === 'filtered' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:text-white'}`}>
+                                            Mês Atual Filtrado
+                                        </button>
+                                        <button onClick={() => openSimulator('all', false)} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${simulator.scope === 'all' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:text-white'}`}>
+                                            Todos os Meses (Geral)
                                         </button>
                                     </div>
+                                </div>
 
-                                    {simulator.changes.length === 0 ? (
-                                        <div className="p-8 text-center text-slate-400 font-bold bg-white rounded-lg border border-slate-200">Nenhuma mudança necessária neste cenário. O sistema já está equilibrado.</div>
-                                    ) : (
-                                        <div className="grid gap-3">
-                                            {simulator.changes.map((ch, idx) => (
-                                                <div key={idx} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-                                                    <div>
-                                                        <div className="font-bold text-slate-800 text-sm">{ch.turma}</div>
-                                                        <div className="text-xs text-slate-500 font-medium">{ch.curso} • {ch.alunos} alunos</div>
-                                                    </div>
-                                                    <div className="flex items-center gap-4">
-                                                        <div className="text-right">
-                                                            <span className="block text-[10px] text-red-400 font-bold uppercase">Antes (Atual)</span>
-                                                            <span className="text-xs font-medium text-slate-500 line-through">{ch.antes.i1} ➔ {ch.antes.i2} {ch.antes.i3 !== 'Vazio' ? `➔ ${ch.antes.i3}` : ''}</span>
+                                {/* Barra de Indicadores Rápidos */}
+                                <div className="bg-slate-100 px-6 py-3 border-b border-slate-200 flex justify-between items-center text-xs font-bold text-slate-600">
+                                    <div className="flex gap-6">
+                                        <span>📋 TURMAS EXIBIDAS: <span className="text-slate-900">{simulator.changes.length}</span></span>
+                                        <span>🔄 OTIMIZAÇÕES DA IA: <span className={simulator.totalModificadas > 0 ? "text-amber-600" : "text-emerald-600"}>{simulator.totalModificadas} turmas</span></span>
+                                    </div>
+                                    <button onClick={() => openSimulator(simulator.scope, true)} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg flex items-center gap-1.5 shadow-sm transition active:scale-95">
+                                        <Icons.Refresh className="w-3.5 h-3.5" /> Alternar Variação Combinatória
+                                    </button>
+                                </div>
+
+                                {/* Corpo Principal Scrolável com os Cartões de Turmas */}
+                                <div className="p-6 flex-1 overflow-y-auto bg-slate-50/50">
+                                    <div className="grid gap-3.5">
+                                        {simulator.changes.map((ch, idx) => (
+                                            <div key={idx} className={`p-4 rounded-xl border transition-all ${ch.changed ? 'bg-amber-50/40 border-amber-300 shadow-sm' : 'bg-white border-slate-200 hover:border-slate-300'}`}>
+                                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                                    
+                                                    {/* Coluna de Dados Cadastrais da Turma */}
+                                                    <div className="flex-1 min-w-[280px]">
+                                                        <div className="flex items-center gap-2 mb-1">
+                                                            <span className="px-2 py-0.5 bg-slate-200 text-slate-800 rounded font-mono text-xs font-bold">{ch.id}</span>
+                                                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${ch.modalidade === 'Técnica' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>
+                                                                {ch.modalidade}
+                                                            </span>
+                                                            {ch.changed ? (
+                                                                <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded text-[10px] font-bold uppercase tracking-wider flex items-center gap-0.5 animate-pulse">⚡ Otimizado</span>
+                                                            ) : (
+                                                                <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] font-bold uppercase tracking-wider">Mantido</span>
+                                                            )}
                                                         </div>
-                                                        <Icons.ArrowRight className="text-indigo-400 w-5 h-5" />
-                                                        <div>
-                                                            <span className="block text-[10px] text-emerald-500 font-bold uppercase">Sugerido (IA)</span>
-                                                            <span className="text-sm font-bold text-emerald-700">{ch.depois.i1} ➔ {ch.depois.i2} {ch.depois.i3 ? `➔ ${ch.depois.i3}` : ''}</span>
-                                                        </div>
+                                                        <h4 className="font-bold text-slate-800 text-sm leading-tight">{ch.curso}</h4>
+                                                        <div className="text-[11px] text-slate-400 font-medium mt-0.5">Início: {ch.inicio} • <span className="font-bold text-slate-600">{ch.alunos} Alunos</span></div>
                                                     </div>
+
+                                                    {/* Coluna Comparativa de Escala Docente */}
+                                                    <div className="flex items-center gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
+                                                        {ch.changed ? (
+                                                            <>
+                                                                <div className="text-right">
+                                                                    <span className="block text-[9px] text-slate-400 font-bold uppercase tracking-wide">Planilha (Offline)</span>
+                                                                    <span className="font-medium text-slate-400 line-through block max-w-[180px] truncate">
+                                                                        {ch.antes.i1} {ch.antes.i2 !== 'Não Atribuído' && `➔ ${ch.antes.i2}`} {ch.antes.i3 !== '' && ch.antes.i3 !== 'Não Atribuído' && `➔ ${ch.antes.i3}`}
+                                                                    </span>
+                                                                </div>
+                                                                <Icons.ArrowRight className="text-amber-500 w-4 h-4 flex-shrink-0" />
+                                                                <div>
+                                                                    <span className="block text-[9px] text-amber-600 font-bold uppercase tracking-wide">Sugestão de Equilíbrio</span>
+                                                                    <span className="font-bold text-slate-800 block max-w-[220px] truncate">
+                                                                        {ch.depois.i1} {ch.depois.i2 && `➔ ${ch.depois.i2}`} {ch.depois.i3 && `➔ ${ch.depois.i3}`}
+                                                                    </span>
+                                                                </div>
+                                                            </>
+                                                        ) : (
+                                                            <div className="w-full">
+                                                                <span className="block text-[9px] text-emerald-600 font-bold uppercase tracking-wide mb-0.5">Distribuição Consolidada</span>
+                                                                <span className="font-bold text-emerald-800 block max-w-[400px] truncate">
+                                                                    {ch.depois.i1} {ch.depois.i2 && `➔ ${ch.depois.i2}`} {ch.depois.i3 && `➔ ${ch.depois.i3}`}
+                                                                </span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
                                                 </div>
-                                            ))}
-                                        </div>
-                                    )}
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
 
-                                {/* Rodapé com Ações Finais */}
-                                <div className="p-4 bg-white border-t border-slate-200 flex justify-end gap-3">
-                                    <button onClick={() => setSimulator({ ...simulator, isOpen: false })} className="px-5 py-2 text-slate-600 font-bold hover:bg-slate-100 rounded-lg">
-                                        Descartar
+                                {/* Rodapé com Ações de Descarte ou Efetivação */}
+                                <div className="p-4 bg-white border-t border-slate-200 flex justify-end items-center gap-3 shadow-inner">
+                                    <button onClick={() => setSimulator({ ...simulator, isOpen: false })} className="px-5 py-2 text-slate-500 font-bold hover:bg-slate-100 rounded-xl text-sm transition">
+                                        Descartar Cenário
                                     </button>
-                                    <button onClick={applySimulation} disabled={simulator.changes.length === 0} className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-lg shadow-md transition flex items-center gap-2">
-                                        <Icons.Check /> Aplicar Cenário
+                                    <button onClick={applySimulation} className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-sm shadow-md flex items-center gap-2 transition active:scale-[0.98]">
+                                        <Icons.Check className="w-4 h-4" /> Confirmar e Gravar Cenário
                                     </button>
                                 </div>
+
                             </div>
                         </div>
-                    )}
-                </div>
-            );
-        }  
+                    )}  
                 
 
         // === PORTÃO DE SEGURANÇA (NOVO) ===
