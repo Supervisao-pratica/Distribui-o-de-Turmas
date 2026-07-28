@@ -290,7 +290,8 @@
             Plus: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>,
             Switch: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>,
             Maximize: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>,
-            Refresh: () => <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>,
+             Refresh: () => <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>,
+             ArrowRight: ({ className = 'w-4 h-4' }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 5l7 7-7 7M5 12h14" /></svg>,
             Check: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>,
             FileText: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>,
             Download: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4-4m0 0l-4-4m4 4V4" /></svg>,
@@ -367,7 +368,8 @@
             const [substitutions, setSubstitutions] = useState([]);
             const [logs, setLogs] = useState([]);
             // Estado do Simulador de Equilíbrio (Instalado no lugar certo!)
-            const [simulator, setSimulator] = useState({ isOpen: false, changes: [], newDb: [], scope: 'all', variationId: 0 });
+            const [simulator, setSimulator] = useState({ isOpen: false, changes: [], newDb: [], scope: 'all', variationId: 0, events: [] });
+            const [simulationEventDraft, setSimulationEventDraft] = useState({ type: 'transfer', classId: '', role: 'instrutor2', instructor: '', date: '', alunos: '' });
             const [isSaving, setIsSaving] = useState(false);
             const [lastSaved, setLastSaved] = useState(null);
             const [viewDate, setViewDate] = useState(new Date().toISOString().split('T')[0]);
@@ -893,11 +895,31 @@ const handleClearAllData = () => {
                 return matchAnalista && matchModalidade && matchCurso && matchDate && matchId && matchDataInicio && matchDataFim;
             }), [processedData, filters]);
 
+            const automationReportRows = useMemo(() => {
+                return data.flatMap(row => {
+                    const autoLogs = normalizeAutoAssignedLogs(row.autoAssignedLogs) || {};
+                    return Object.entries(autoLogs).map(([role, log]) => ({
+                        id: `${row.id}-${role}`,
+                        turmaId: row.id,
+                        curso: row.curso,
+                        modalidade: getSafeModalidade(row),
+                        alunos: parseInt(row.alunos) || 0,
+                        inicio: row.inicio,
+                        termino: row.termino,
+                        papel: role.replace('instrutor', 'Instrutor '),
+                        instrutor: typeof log === 'object' ? log.nome : log,
+                        tipoAutomacao: typeof log === 'object' ? (log.type || 'auto') : 'auto',
+                        motivo: typeof log === 'object' ? (log.reason || 'Preenchido automaticamente pelo sistema.') : 'Preenchido automaticamente pelo sistema.'
+                    }));
+                }).sort((a, b) => String(a.turmaId).localeCompare(String(b.turmaId)));
+            }, [data]);
+
             const filteredReportData = useMemo(() => {
                 if (reportType === 'logs') return logs;
                 if (reportType === 'subs') return substitutions;
+                if (reportType === 'automacao') return automationReportRows;
                 return filteredRows;
-            }, [reportType, logs, substitutions, filteredRows]);
+            }, [reportType, logs, substitutions, automationReportRows, filteredRows]);
 
             // NOVO: Função para Exportar para Excel com as datas em Dia/Mês/Ano
             const exportClassesToExcel = () => {
@@ -1071,6 +1093,29 @@ if (!info || info.status === 'Finalizado' || info.status === 'Agendado') return;
         return { ...inst, score, label: `(${inst.totalAlunos} al / ${inst.totalTurmas} trm)`, emoji, type, tip };
     }).sort((a,b) => a.score - b.score);
 };
+
+// Adapter used by the simulator and the import automation. It keeps the
+// current role available while excluding only the other roles in the class.
+const getBalancedInstructorOptions = (row, role, excludedInstructors = [], _unused = [], customPool = null, evaluationDate = null, baseDataOverride = null) => {
+    const roles = getClassInstructorRoles(row || {});
+    const sameClassExcludes = roles
+        .filter(itemRole => itemRole !== role)
+        .map(itemRole => row && row[itemRole])
+        .filter(Boolean);
+    const requestedExcludes = Array.isArray(excludedInstructors) ? excludedInstructors : [excludedInstructors];
+    const excludes = [...new Set([...sameClassExcludes, ...requestedExcludes].filter(Boolean))];
+    return getRankedInstructorOptions(
+        row || {},
+        excludes,
+        role,
+        getSafeModalidade(row || {}),
+        [],
+        customPool || uniqueInstrutores,
+        evaluationDate || viewDate,
+        baseDataOverride
+    );
+};
+
 // === IA: REBALANCEAMENTO FUTURO DE INSTRUTORES ===
 const BALANCE_LIMITS = {
     min: 200,
@@ -2342,13 +2387,68 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
 };
 
 // === IA: SIMULADOR DE CENÁRIOS DE EQUILÍBRIO AVANÇADO (VISUAL COMPLETO) ===
-            const openSimulator = (scopeToUse = 'all', isNewScenario = false) => {
+            const applySimulationEventToRows = (sourceRows, event) => {
+                const rows = JSON.parse(JSON.stringify(sourceRows || []));
+                const eventType = safeString(event && event.type);
+                if (eventType === 'block') {
+                    rows.forEach(row => getClassInstructorRoles(row).forEach(role => {
+                        if (normalizeText(row[role]) === normalizeText(event.instructor)) row[role] = '';
+                    }));
+                    return rows;
+                }
+                const row = rows.find(item => String(item.id) === String(event.classId));
+                if (!row) return rows;
+                if (eventType === 'students') row.alunos = parseInt(event.alunos, 10) || 0;
+                if (eventType === 'clear') row[event.role] = '';
+                if (eventType === 'transfer') {
+                    row[event.role] = safeString(event.instructor);
+                    if (event.role === 'instrutor1' && event.date) row.inicio = event.date;
+                    if (event.role === 'instrutor2' && event.date) row.dataTransferencia = event.date;
+                    if (event.role === 'instrutor3' && event.date) row.dataTransferencia2 = event.date;
+                }
+                if (eventType === 'startDate' && event.date) row.inicio = event.date;
+                if (eventType === 'endDate' && event.date) row.termino = event.date;
+                if (eventType === 'passageDate' && event.date) {
+                    if (event.role === 'instrutor3') row.dataTransferencia2 = event.date;
+                    else row.dataTransferencia = event.date;
+                }
+                return rows;
+            };
+
+            const addSimulationEvent = () => {
+                const draft = { ...simulationEventDraft };
+                if (draft.type === 'addInstructor' && !safeString(draft.instructor).trim()) return showNotify('Informe o nome do instrutor que estará disponível na simulação.', 'error');
+                if (!['block', 'addInstructor'].includes(draft.type) && !draft.classId) return showNotify('Selecione uma turma para o evento simulado.', 'error');
+                if (draft.type === 'block' && !draft.instructor) return showNotify('Selecione o instrutor que será bloqueado na simulação.', 'error');
+                if (draft.type === 'transfer' && (!draft.instructor || !draft.date)) return showNotify('Informe o novo instrutor e a data da transferência.', 'error');
+                if (draft.type === 'students' && draft.alunos === '') return showNotify('Informe a nova quantidade de alunos.', 'error');
+                if (['startDate', 'endDate', 'passageDate'].includes(draft.type) && !draft.date) return showNotify('Informe a data do evento simulado.', 'error');
+                const events = [...(simulator.events || []), draft];
+                setSimulationEventDraft({ ...simulationEventDraft, classId: '', instructor: '', date: '', alunos: '' });
+                openSimulator(simulator.scope, false, events);
+            };
+
+            const removeSimulationEvent = (eventIndex) => {
+                const events = (simulator.events || []).filter((_, index) => index !== eventIndex);
+                openSimulator(simulator.scope, false, events);
+            };
+
+            const openSimulator = (scopeToUse = 'all', isNewScenario = false, eventsOverride = null) => {
                 if (!data || data.length === 0) {
                     alert("Não há turmas na base de dados para simular.");
                     return;
                 }
 
+                const originalDb = JSON.parse(JSON.stringify(data));
                 let tempDb = JSON.parse(JSON.stringify(data)); // Cópia segura em standby
+                const scenarioEvents = eventsOverride || simulator.events || [];
+                const lockedEventKeys = new Set();
+                const scenarioInstructorNames = new Set(extraInstructors);
+                scenarioEvents.forEach(event => {
+                    tempDb = applySimulationEventToRows(tempDb, event);
+                    if (event.type === 'transfer' || event.type === 'clear') lockedEventKeys.add(`${event.classId}:${event.role}`);
+                    if (event.type === 'addInstructor' && safeString(event.instructor).trim()) scenarioInstructorNames.add(safeString(event.instructor).trim());
+                });
                 let simulatedClasses = [];
                 let totalAlocacoesModificadas = 0;
                 
@@ -2364,7 +2464,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                 const anoAlvo = dataAlvoOtimizacao.getFullYear();
 
                 // Coleta todos os instrutores ativos reais
-                let listaReais = new Set();
+                let listaReais = new Set(scenarioInstructorNames);
                 tempDb.forEach(d => {
                     if (d.instrutor1 && d.instrutor1.trim().length > 1) listaReais.add(d.instrutor1.trim());
                     if (d.instrutor2 && d.instrutor2.trim().length > 1) listaReais.add(d.instrutor2.trim());
@@ -2374,7 +2474,11 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                     }
                 });
                 
-                let arrayReais = Array.from(listaReais);
+                const simulatedBlocked = new Set(scenarioEvents
+                    .filter(event => event.type === 'block')
+                    .map(event => normalizeText(event.instructor)));
+                let arrayReais = Array.from(listaReais)
+                    .filter(name => !blockedInstructors.includes(normalizeText(name)) && !simulatedBlocked.has(normalizeText(name)));
 
                 // Se acionado "Gerar Novo Cenário", rotaciona levemente a fila de desempates
                 if (isNewScenario) {
@@ -2384,6 +2488,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                 // Processa a simulação linear de toda a base
                 for (let i = 0; i < tempDb.length; i++) {
                     let row = tempDb[i];
+                    const originalRow = originalDb.find(item => String(item.id) === String(row.id)) || row;
                     
                     // Tratamento do filtro de escopo cronológico
                     const dInicio = parseSecureDate(row.inicio);
@@ -2395,10 +2500,10 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
 
                     // Backup do estado vindo da planilha
                     const estadoAnterior = {
-                        i1: row.instrutor1 || 'Não Atribuído',
-                        i2: row.instrutor2 || 'Não Atribuído',
-                        i3: row.instrutor3 || 'Não Atribuído',
-                        atual: row.instrutorAtual || 'Não Atribuído'
+                        i1: originalRow.instrutor1 || 'Não Atribuído',
+                        i2: originalRow.instrutor2 || 'Não Atribuído',
+                        i3: originalRow.instrutor3 || 'Não Atribuído',
+                        atual: originalRow.instrutorAtual || 'Não Atribuído'
                     };
 
                     let roles = ['instrutor1', 'instrutor2'];
@@ -2425,6 +2530,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                     let rowChanged = false;
 
                     for (let role of roles) {
+                        if (lockedEventKeys.has(`${row.id}:${role}`)) continue;
                         if (isAtualPreenchido && role === papelAtualDaLinhaDoTempo) continue;
 
                         const currentValue = String(row[role] || '').trim();
@@ -2478,12 +2584,14 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                     newDb: tempDb,
                     scope: scopeToUse,
                     variationId: (simulator.variationId || 0) + 1,
-                    totalModificadas: totalAlocacoesModificadas
+                    totalModificadas: totalAlocacoesModificadas,
+                    events: scenarioEvents
                 });
             };
 
             const applySimulation = () => {
-                const logs = addLog("Simulador IA", "Lote", "Inteligente", `Cenário aprovado pelo usuário. Escopo: ${simulator.scope === 'filtered' ? 'Mês Atual' : 'Geral'}.`);
+                const eventSummary = (simulator.events || []).map(event => `${event.type}:${event.classId || event.instructor || 'geral'}${event.date ? `@${event.date}` : ''}`).join(' | ') || 'Nenhum evento manual';
+                const logs = addLog("Simulador IA", "Lote", "Inteligente", `Cenário aprovado pelo usuário. Escopo: ${simulator.scope === 'filtered' ? 'Mês Atual' : 'Geral'}. Eventos: ${eventSummary}`);
                 persist(simulator.newDb, substitutions, logs);
                 setData(simulator.newDb);
                 setSimulator({ ...simulator, isOpen: false });
@@ -3641,12 +3749,15 @@ useEffect(() => {
                 return <span title={reason} className={`text-[8px] leading-none px-1 py-0.5 rounded border font-black ${badgeClass}`}>{label}</span>;
             };
 
-            const getOrganizedInstructorData = (instructorName) => {
+            const getOrganizedInstructorData = (instructorName, referenceDate = null) => {
                 const fullProfile = globalInstructorStats[instructorName];
                 if (!fullProfile) return null;
 
                 const allInvolvedClasses = data.filter(d => getCanonical(d.instrutor1) === instructorName || getCanonical(d.instrutor2) === instructorName || getCanonical(d.instrutor3) === instructorName); 
-                const target = new Date(viewDate + 'T00:00:00');
+                const target = referenceDate instanceof Date
+                    ? new Date(referenceDate.getTime())
+                    : new Date(viewDate + 'T00:00:00');
+                target.setHours(0, 0, 0, 0);
                 const activeClasses = []; const incomingClasses = []; const outgoingClasses = []; const historyClasses = []; const futureClasses = [];
               
                 const monthlyData = [];
@@ -3786,8 +3897,14 @@ useEffect(() => {
             };
 
             const handleCopyEmail = (instructor, period) => {
-                if (!instructor || !instructor.organized) return;
-                const org = instructor.organized;
+                if (!instructor) return;
+                const accessDate = new Date();
+                accessDate.setHours(0, 0, 0, 0);
+                const accessProfile = getOrganizedInstructorData(instructor.nome, accessDate);
+                const org = (period && period.start && period.end)
+                    ? instructor.organized
+                    : (accessProfile ? accessProfile.organized : instructor.organized);
+                if (!org) return;
                 
                 let actFiltered = [];
                 let incFiltered = [];
@@ -3853,20 +3970,26 @@ useEffect(() => {
                                 const tInDate = slice.isTransfIn ? new Date(slice.transfInDate + 'T00:00:00') : null;
                                 const tOutDate = slice.isTransfOut ? new Date(slice.transfOutDate + 'T00:00:00') : null;
 
-                                const hasTransferInPeriod = tInDate && tInDate >= pStart && tInDate <= pEnd;
-                                const hasTransferOutPeriod = tOutDate && tOutDate >= pStart && tOutDate <= pEnd;
+                                 const hasTransferInPeriod = tInDate && tInDate >= pStart && tInDate <= pEnd;
+                                 const hasTransferOutPeriod = tOutDate && tOutDate >= pStart && tOutDate <= pEnd;
+                                 const transferInIsFuture = tInDate && tInDate > accessDate;
+                                 const transferOutIsFuture = tOutDate && tOutDate > accessDate;
 
-                                if (hasTransferInPeriod) {
-                                    clonedCls.transferNote = `Receberá de ${slice.transfInFrom} em ${formatDatePTBR(slice.transfInDate)}`;
-                                    if (hasTransferOutPeriod) clonedCls.transferNote += ` | Repassará p/ ${slice.transfOutTo} em ${formatDatePTBR(slice.transfOutDate)}`;
-                                    incFiltered.push(clonedCls);
-                                } else if (hasTransferOutPeriod) {
-                                    clonedCls.transferNote = `Passará para ${slice.transfOutTo} em ${formatDatePTBR(slice.transfOutDate)}`;
-                                    outFiltered.push(clonedCls);
-                                } else {
-                                    clonedCls.statusDetail = slice.roleName;
-                                    actFiltered.push(clonedCls);
-                                }
+                                 if (hasTransferInPeriod && transferInIsFuture) {
+                                     clonedCls.transferNote = `Receberá de ${slice.transfInFrom} em ${formatDatePTBR(slice.transfInDate)}`;
+                                     if (hasTransferOutPeriod && transferOutIsFuture) clonedCls.transferNote += ` | Repassará p/ ${slice.transfOutTo} em ${formatDatePTBR(slice.transfOutDate)}`;
+                                     incFiltered.push(clonedCls);
+                                 } else if (hasTransferOutPeriod && transferOutIsFuture) {
+                                     clonedCls.transferNote = `Passará para ${slice.transfOutTo} em ${formatDatePTBR(slice.transfOutDate)}`;
+                                     outFiltered.push(clonedCls);
+                                 } else {
+                                     clonedCls.statusDetail = tOutDate && tOutDate <= accessDate
+                                         ? `Já repassada em ${formatDatePTBR(slice.transfOutDate)}`
+                                         : (tInDate && tInDate <= accessDate
+                                             ? `Recebida em ${formatDatePTBR(slice.transfInDate)}`
+                                             : slice.roleName);
+                                     actFiltered.push(clonedCls);
+                                 }
                             }
                         });
                     });
@@ -4011,7 +4134,22 @@ useEffect(() => {
                             "Situação": safeString(row.status || 'Ativa')
                         }));
                     } 
-                    // 2. Se for o Relatório de Substituições
+                    // 2. Se for o relatório isolado das automações
+                    else if (name.includes('automacao')) {
+                         finalDataForExcel = dataToExport.map(row => ({
+                            "Turma": safeString(row.turmaId),
+                            "Modalidade": safeString(row.modalidade),
+                            "Curso": safeString(row.curso),
+                            "Alunos": parseInt(row.alunos) || 0,
+                            "Papel": safeString(row.papel),
+                            "Instrutor Definido": safeString(row.instrutor),
+                            "Tipo de Automação": safeString(row.tipoAutomacao),
+                            "Motivo da IA": safeString(row.motivo),
+                            "Início": formatDatePTBR(row.inicio),
+                            "Término": formatDatePTBR(row.termino)
+                         }));
+                    }
+                    // 3. Se for o Relatório de Substituições
                     else if (name.includes('subs')) {
                          finalDataForExcel = dataToExport.map(row => ({
                             "Turma": safeString(row.turmaId),
@@ -4023,7 +4161,7 @@ useEffect(() => {
                             "Definitiva?": row.isDefinitive ? "Sim" : "Não"
                          }));
                     } 
-                    // 3. Se for o Histórico de Logs
+                    // 4. Se for o Histórico de Logs
                     else {
                          finalDataForExcel = dataToExport.map(row => ({
                             "Data/Hora": new Date(row.timestamp).toLocaleString('pt-BR'),
@@ -4172,7 +4310,7 @@ useEffect(() => {
                                     </button> 
                                     
                                     <button onClick={() => openSimulator('all', false)} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105" title={`Abre o Simulador de Equilíbrio sugerindo mudanças`}>
-                                        <Icons.Robot /> Equilibrar Turmas
+                                        <Icons.Robot /> Simulador IA
                                     </button>
 
                                     <button onClick={() => setIsSubModalOpen(true)} className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105"><Icons.Switch /> Transferir</button>
@@ -4190,6 +4328,7 @@ useEffect(() => {
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('geral');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='geral'?'border-blue-600 text-blue-900 bg-white':'border-transparent text-gray-500 hover:text-blue-600 hover:bg-white'}`}>Relatório Geral</button>
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('subs');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='subs'?'border-blue-600 text-blue-900 bg-white':'border-transparent text-gray-500 hover:text-blue-600 hover:bg-white'}`}>Relatório Substituições</button>
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('estatisticas');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='estatisticas'?'border-emerald-600 text-emerald-900 bg-emerald-50':'border-transparent text-gray-500 hover:text-emerald-600 hover:bg-emerald-50'}`}>Estatísticas e Médias</button>
+                                <button onClick={() => {setActiveTab('relatorios'); setReportType('automacao');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='automacao'?'border-amber-600 text-amber-900 bg-amber-50':'border-transparent text-gray-500 hover:text-amber-600 hover:bg-amber-50'}`}>Automações IA</button>
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('logs');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='logs'?'border-purple-600 text-purple-900 bg-purple-50':'border-transparent text-gray-500 hover:text-purple-600 hover:bg-purple-50'}`}>Histórico</button>
                                 {/* Botão de Limpar Banco */}
                                 <button onClick={handleClearAllData} className="px-3 py-1 text-red-600 hover:bg-red-50 border border-red-200 rounded text-xs font-bold flex items-center gap-1 transition mr-2">
@@ -4273,7 +4412,7 @@ useEffect(() => {
                                 ) : (
                                     <>
                                         <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2 no-print"> <Icons.FileText /> 
-                                            {reportType === 'geral' ? 'Relatório Geral de Turmas' : reportType === 'subs' ? 'Relatório de Substituições / Transferências' : 'Histórico de Alterações (Audit Log)'}
+                                            {reportType === 'geral' ? 'Relatório Geral de Turmas' : reportType === 'subs' ? 'Relatório de Substituições / Transferências' : reportType === 'automacao' ? 'Relatório Isolado das Automações IA' : 'Histórico de Alterações (Audit Log)'}
                                         </h2>
                                         <div className="text-xs text-gray-500 mb-4 font-semibold no-print border-b pb-2">Visualizando {filteredReportData ? filteredReportData.length : 0} registros</div>
                                         <div className="flex gap-4 mb-4 no-print">
@@ -4285,8 +4424,10 @@ useEffect(() => {
                                                 <thead>
                                                     <tr>
                                                         {reportType === 'logs' ? (
-                                                            <><th>Data/Hora</th><th>Turma ID</th><th>Tipo</th><th>Antes</th><th>Depois</th></>
-                                                        ) : (
+                                                             <><th>Data/Hora</th><th>Turma ID</th><th>Tipo</th><th>Antes</th><th>Depois</th></>
+                                                         ) : reportType === 'automacao' ? (
+                                                             <><th>Turma</th><th>Modalidade / Curso</th><th>Papel</th><th>Instrutor</th><th>Tipo</th><th>Motivo da IA</th></>
+                                                         ) : (
                                                             <><th>Turma</th><th>APZ/Curso</th><th>Analista</th><th>Instrutores (Cadeia)</th><th>Situação</th><th>Período</th></>
                                                         )}
                                                     </tr>
@@ -4295,14 +4436,23 @@ useEffect(() => {
                                                     {(filteredReportData || []).slice(0, 200).map((row, i) => (
                                                         <tr key={row.id || i} className="hover:bg-slate-50 transition">
                                                             {reportType === 'logs' ? (
-                                                                <>
+                                                                 <>
                                                                     <td className="font-mono text-gray-500">{new Date(row.timestamp).toLocaleString('pt-BR')}</td>
                                                                     <td className="font-bold">{row.classId}</td>
                                                                     <td><span className={`px-2 py-0.5 rounded text-[10px] font-bold ${row.type === 'Transferência Definitiva' || row.type === 'Onboarding de Instrutor' ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-700'}`}>{row.type}</span></td>
                                                                     <td className="text-red-600 max-w-xs truncate" title={safeString(row.before)}>{safeString(row.before)}</td>
                                                                     <td className="text-green-600 max-w-xs truncate" title={safeString(row.after)}>{safeString(row.after)}</td>
                                                                 </>
-                                                            ) : (
+                                                             ) : reportType === 'automacao' ? (
+                                                                 <>
+                                                                     <td className="font-bold">{safeString(row.turmaId)}</td>
+                                                                     <td><span className="font-bold">{safeString(row.curso)}</span><span className="block text-[10px] uppercase text-gray-400 font-bold">{safeString(row.modalidade)}</span></td>
+                                                                     <td>{safeString(row.papel)}</td>
+                                                                     <td className="font-bold text-amber-700">{safeString(row.instrutor)}</td>
+                                                                     <td><span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">{safeString(row.tipoAutomacao)}</span></td>
+                                                                     <td className="text-xs text-slate-600 max-w-xl">{safeString(row.motivo)}</td>
+                                                                 </>
+                                                             ) : (
                                                                 <>
                                                                     <td>{safeString(reportType === 'subs' ? row.turmaId : row.id)}</td>
                                                                     <td>
@@ -4339,7 +4489,7 @@ useEffect(() => {
                                                         </tr>
                                                     ))}
                                                     {(!filteredReportData || filteredReportData.length === 0) && (
-                                                        <tr><td colSpan="6" className="text-center py-6 text-gray-400 italic">Nenhum dado encontrado para os filtros atuais.</td></tr>
+                                                        <tr><td colSpan={reportType === 'logs' ? 5 : 6} className="text-center py-6 text-gray-400 italic">Nenhum dado encontrado para os filtros atuais.</td></tr>
                                                     )}
                                                 </tbody>
                                             </table>
@@ -5387,6 +5537,93 @@ useEffect(() => {
                                 </div>
 
                                 {/* Corpo Principal Scrolável com os Cartões de Turmas */}
+                                <div className="p-4 bg-white border-b border-slate-200 flex flex-col gap-3">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div>
+                                            <h3 className="font-bold text-slate-800 text-sm">Eventos para testar neste cenário</h3>
+                                            <p className="text-[11px] text-slate-500">Os eventos abaixo alteram somente a cópia da simulação.</p>
+                                        </div>
+                                        <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-1 rounded">{(simulator.events || []).length} evento(s)</span>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+                                        <div className="input-wrapper md:col-span-1">
+                                            <label className="input-label">Evento</label>
+                                            <select className="input-field" value={simulationEventDraft.type} onChange={e => setSimulationEventDraft({...simulationEventDraft, type: e.target.value})}>
+                                                <option value="transfer">Transferir papel</option>
+                                                <option value="students">Alterar alunos</option>
+                                                <option value="clear">Limpar papel</option>
+                                                <option value="block">Bloquear instrutor</option>
+                                                <option value="startDate">Alterar início da turma</option>
+                                                <option value="endDate">Alterar término da turma</option>
+                                                <option value="passageDate">Alterar data de passagem</option>
+                                                <option value="addInstructor">Disponibilizar novo instrutor</option>
+                                            </select>
+                                        </div>
+                                        {!['block', 'addInstructor'].includes(simulationEventDraft.type) && (
+                                            <div className="input-wrapper md:col-span-1">
+                                                <label className="input-label">Turma</label>
+                                                <select className="input-field" value={simulationEventDraft.classId} onChange={e => setSimulationEventDraft({...simulationEventDraft, classId: e.target.value})}>
+                                                    <option value="">Selecione...</option>
+                                                    {data.map(row => <option key={row.id} value={row.id}>{row.id} - {row.curso}</option>)}
+                                                </select>
+                                            </div>
+                                        )}
+                                        {(simulationEventDraft.type === 'transfer' || simulationEventDraft.type === 'clear' || simulationEventDraft.type === 'passageDate') && (
+                                            <div className="input-wrapper md:col-span-1">
+                                                <label className="input-label">Papel</label>
+                                                <select className="input-field" value={simulationEventDraft.role} onChange={e => setSimulationEventDraft({...simulationEventDraft, role: e.target.value})}>
+                                                    <option value="instrutor1">Instrutor 1</option>
+                                                    <option value="instrutor2">Instrutor 2</option>
+                                                    <option value="instrutor3">Instrutor 3</option>
+                                                </select>
+                                            </div>
+                                        )}
+                                        {simulationEventDraft.type === 'transfer' && (
+                                            <>
+                                                <div className="input-wrapper md:col-span-1">
+                                                    <label className="input-label">Novo instrutor</label>
+                                                    <select className="input-field" value={simulationEventDraft.instructor} onChange={e => setSimulationEventDraft({...simulationEventDraft, instructor: e.target.value})}>
+                                                        <option value="">Selecione...</option>
+                                                        {[...new Set([...uniqueInstrutores, ...extraInstructors])].sort().map(name => <option key={name} value={name}>{name}</option>)}
+                                                    </select>
+                                                </div>
+                                            </>
+                                        )}
+                                        {['transfer', 'startDate', 'endDate', 'passageDate'].includes(simulationEventDraft.type) && (
+                                            <div className="input-wrapper md:col-span-1">
+                                                <label className="input-label">Data</label>
+                                                <input type="date" className="input-field" value={simulationEventDraft.date} onChange={e => setSimulationEventDraft({...simulationEventDraft, date: e.target.value})} />
+                                            </div>
+                                        )}
+                                        {simulationEventDraft.type === 'students' && (
+                                            <div className="input-wrapper md:col-span-1">
+                                                <label className="input-label">Alunos</label>
+                                                <input type="number" min="0" className="input-field" value={simulationEventDraft.alunos} onChange={e => setSimulationEventDraft({...simulationEventDraft, alunos: e.target.value})} />
+                                            </div>
+                                        )}
+                                        {simulationEventDraft.type === 'block' && (
+                                            <div className="input-wrapper md:col-span-2">
+                                                <label className="input-label">Instrutor</label>
+                                                <select className="input-field" value={simulationEventDraft.instructor} onChange={e => setSimulationEventDraft({...simulationEventDraft, instructor: e.target.value})}>
+                                                    <option value="">Selecione...</option>
+                                                    {[...new Set([...uniqueInstrutores, ...extraInstructors])].sort().map(name => <option key={name} value={name}>{name}</option>)}
+                                                </select>
+                                            </div>
+                                        )}
+                                        {simulationEventDraft.type === 'addInstructor' && (
+                                            <div className="input-wrapper md:col-span-2">
+                                                <label className="input-label">Novo instrutor</label>
+                                                <input type="text" className="input-field" value={simulationEventDraft.instructor} onChange={e => setSimulationEventDraft({...simulationEventDraft, instructor: e.target.value})} placeholder="Nome disponível somente no cenário" />
+                                            </div>
+                                        )}
+                                        <button onClick={addSimulationEvent} className="px-3 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-xs">Adicionar evento</button>
+                                        <button onClick={() => openSimulator(simulator.scope, false, [])} className="px-3 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg font-bold text-xs">Limpar eventos</button>
+                                    </div>
+                                    {(simulator.events || []).length > 0 && <div className="flex flex-wrap gap-2">
+                                        {simulator.events.map((event, index) => <button type="button" key={`${event.type}-${index}`} onClick={() => removeSimulationEvent(index)} className="text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200 rounded px-2 py-1 hover:bg-red-50 hover:text-red-700" title="Remover este evento">{event.type} {event.classId || event.instructor} {event.date || ''} ×</button>)}
+                                    </div>}
+                                </div>
+
                                 <div className="p-6 flex-1 overflow-y-auto bg-slate-50/50">
                                     <div className="grid gap-3.5">
                                         {simulator.changes.map((ch, idx) => (
