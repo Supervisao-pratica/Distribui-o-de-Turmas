@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>S.G.T - Gestão de Turmas (v100 Mega Painel)</title>
+    <title>S.G.T - Gestão de Turmas (v106 Central IA Legível)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -61,6 +61,18 @@
             padding: 2.5rem; overflow-y: auto; background-color: #f8fafc;
             display: flex; flex-direction: column; gap: 2rem;
         }
+
+
+        /* CENTRAL IA: layout independente do Tailwind para impedir compressao dos cards */
+        .ai-center-window { width: min(980px, 96vw) !important; height: 88vh !important; max-height: 88vh !important; display: flex !important; flex-direction: column !important; overflow: hidden !important; }
+        .ai-center-header { flex: 0 0 auto !important; }
+        .ai-center-shell { flex: 1 1 auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; overflow: hidden !important; }
+        .ai-center-intro { flex: 0 0 auto !important; }
+        .ai-center-scroll { flex: 1 1 auto !important; min-height: 0 !important; overflow-y: auto !important; overflow-x: hidden !important; }
+        .ai-center-list { display: flex !important; flex-direction: column !important; gap: 16px !important; }
+        .ai-instructor-card { flex: 0 0 auto !important; min-height: 84px !important; height: auto !important; overflow: visible !important; }
+        .ai-alert-row { display: block !important; min-height: 64px !important; height: auto !important; overflow: visible !important; white-space: normal !important; }
+        .ai-center-footer { flex: 0 0 auto !important; position: relative !important; }
 
         /* INPUTS */
         .input-wrapper { display: flex; flex-direction: column; gap: 0.5rem; } 
@@ -441,6 +453,7 @@
 
             const [emailConfigModal, setEmailConfigModal] = useState(false);
             const [emailPeriod, setEmailPeriod] = useState({ start: '', end: '' });
+            const [aiAlertModal, setAiAlertModal] = useState(null);
 
             // === MODO TESTE LOCAL: carrega somente dados do navegador ===
             useEffect(() => {
@@ -1005,17 +1018,23 @@ if (!info || info.status === 'Finalizado' || info.status === 'Agendado') return;
     });
 
     const availableStats = Object.values(stats).filter(i => !normalizedExcludes.includes(normalizeText(i.nome)));
-    
+    const minCourseLoad = availableStats.length > 0 ? Math.min(...availableStats.map(i => i.turmasDoCurso)) : 0;
+    const balancedCourseCandidates = availableStats.filter(i =>
+        i.turmasDoCurso <= minCourseLoad + BALANCE_LIMITS.maxCourseGap &&
+        i.turmasDoCurso < BALANCE_LIMITS.maxSameCourse
+    );
+    const candidateStats = balancedCourseCandidates.length > 0 ? balancedCourseCandidates : availableStats;
+
     // === NOVA LÓGICA: GRAVIDADE DA MÉDIA GLOBAL ===
-    const totalInsts = availableStats.length;
-    const somaAlunos = availableStats.reduce((acc, i) => acc + i.totalAlunos, 0);
-    const somaTurmas = availableStats.reduce((acc, i) => acc + i.totalTurmas, 0);
+    const totalInsts = candidateStats.length;
+    const somaAlunos = candidateStats.reduce((acc, i) => acc + i.totalAlunos, 0);
+    const somaTurmas = candidateStats.reduce((acc, i) => acc + i.totalTurmas, 0);
     
     // Descobre a média exata de alunos e turmas da equipe
     const mediaAlunos = totalInsts > 0 ? somaAlunos / totalInsts : 0;
     const mediaTurmas = totalInsts > 0 ? somaTurmas / totalInsts : 0;
 
-    return availableStats.map(inst => {
+    return candidateStats.map(inst => {
         // A pontuação base agora é a distância do instrutor para a média. 
         // Zero é perfeito. Negativo é prioridade. Positivo vai pro fim da fila.
         let score = inst.totalAlunos - mediaAlunos; 
@@ -1105,7 +1124,7 @@ const getBalancedInstructorOptions = (row, role, excludedInstructors = [], _unus
     const requestedExcludes = Array.isArray(excludedInstructors) ? excludedInstructors : [excludedInstructors];
     const excludes = [...new Set([...sameClassExcludes, ...requestedExcludes].filter(Boolean))];
     return getRankedInstructorOptions(
-        row || {},
+        safeString((row || {}).curso),
         excludes,
         role,
         getSafeModalidade(row || {}),
@@ -1124,6 +1143,7 @@ const BALANCE_LIMITS = {
     hardMax: 280,
     maxGap: 40,       // Pode deixar aqui, a nova regra de Média é mais inteligente que ele
     maxSameCourse: 3,
+    maxCourseGap: 1,
     monthsAhead: 6,   // <-- CRÍTICO: Permite que a IA enxergue até dezembro
     maxMoves: 1500    // <-- CRÍTICO: Dá energia suficiente para a IA distribuir turmas grandes
 };
@@ -2446,7 +2466,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                 const scenarioInstructorNames = new Set(extraInstructors);
                 scenarioEvents.forEach(event => {
                     tempDb = applySimulationEventToRows(tempDb, event);
-                    if (event.type === 'transfer' || event.type === 'clear') lockedEventKeys.add(`${event.classId}:${event.role}`);
+                    if (event.type === 'transfer' || event.type === 'clear') lockedEventKeys.add(`${event.classId}|${event.role}`);
                     if (event.type === 'addInstructor' && safeString(event.instructor).trim()) scenarioInstructorNames.add(safeString(event.instructor).trim());
                 });
                 let simulatedClasses = [];
@@ -2530,7 +2550,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                     let rowChanged = false;
 
                     for (let role of roles) {
-                        if (lockedEventKeys.has(`${row.id}:${role}`)) continue;
+                        if (lockedEventKeys.has(`${row.id}|${role}`)) continue;
                         if (isAtualPreenchido && role === papelAtualDaLinhaDoTempo) continue;
 
                         const currentValue = String(row[role] || '').trim();
@@ -2576,17 +2596,33 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                         }
                     });
                 }
-
-                // Abre a janela do simulador exibindo o cenário completo em qualquer situação
-                setSimulator({
-                    isOpen: true,
-                    changes: simulatedClasses,
-                    newDb: tempDb,
-                    scope: scopeToUse,
-                    variationId: (simulator.variationId || 0) + 1,
-                    totalModificadas: totalAlocacoesModificadas,
-                    events: scenarioEvents
+                // Executa o mesmo motor cronológico que será usado na aplicação real.
+                const simulationPool = arrayReais;
+                const priorityDates = getCriticalChronologicalPriorityDates(tempDb, simulationPool, 12);
+                const chronologicalResult = executeChronologicalAutoBalance(tempDb, lockedEventKeys, simulationPool, {
+                    priorityDateList: priorityDates, maxPriorityDates: 10,
+                    maxChronologicalIterations: 60, maxRepairMoves: 80, maxRepairIssues: 16,
+                    priorityRepairMoves: 20, priorityRepairCycles: 3, priorityMaxDonors: 8,
+                    protectPriorityDate: false
                 });
+                tempDb = chronologicalResult.rows;
+                simulatedClasses = tempDb.filter(row => {
+                    if (scopeToUse !== 'filtered') return true;
+                    const start = parseSecureDate(row.inicio);
+                    return start && start.getMonth() === mesAlvo && start.getFullYear() === anoAlvo;
+                }).map(row => {
+                    const originalRow = originalDb.find(item => String(item.id) === String(row.id)) || {};
+                    const before = { i1: originalRow.instrutor1 || 'Não Atribuído', i2: originalRow.instrutor2 || 'Não Atribuído', i3: originalRow.instrutor3 || 'Não Atribuído', atual: originalRow.instrutorAtual || 'Não Atribuído' };
+                    const activeAfter = getActiveInfoOnDate(row, dataAlvoOtimizacao);
+                    const after = { i1: row.instrutor1 || 'Não Atribuído', i2: row.instrutor2 || 'Não Atribuído', i3: row.instrutor3 || '', atual: activeAfter.inst || row.instrutorAtual || 'Não Atribuído' };
+                    const changed = ['i1','i2','i3','atual'].some(key => normalizeText(before[key]) !== normalizeText(after[key]));
+                    return { id: row.id || 'Sem ID', curso: row.curso, modalidade: row.modalidade, alunos: parseInt(row.alunos) || 0, inicio: row.inicio, changed, antes: before, depois: after };
+                });
+                totalAlocacoesModificadas = simulatedClasses.filter(item => item.changed).length;
+                setSimulator({ isOpen: true, changes: simulatedClasses, newDb: tempDb, scope: scopeToUse,
+                    variationId: (simulator.variationId || 0) + 1, totalModificadas: totalAlocacoesModificadas,
+                    events: scenarioEvents, balanceMoves: chronologicalResult.moves,
+                    remainingIssues: chronologicalResult.remainingIssues, priorityDates });
             };
 
             const applySimulation = () => {
@@ -2838,48 +2874,15 @@ const handleBlockInstructor = (instructorName) => {
 };
 
 useEffect(() => {
-    if (!user) return;
-    if (!data || data.length === 0) return;
-    if (isSaving) return;
-    if (blockedCleanupRunningRef.current) return;
-
-    const affectedRows = data.filter(row => {
-        return getBlockRolesForClass(row).some(role => isBlockedInstructorName(row[role]));
-    });
-
-    if (affectedRows.length === 0) return;
-
-    blockedCleanupRunningRef.current = true;
-    const affectedNames = [...new Set(affectedRows.flatMap(row => {
-        return getBlockRolesForClass(row)
-            .map(role => row[role])
-            .filter(nome => isBlockedInstructorName(nome))
-            .map(nome => getCanonical(nome));
-    }))].filter(Boolean);
-
-    const redistribution = redistributeBlockedInstructorRoles(data, blockedInstructors);
-    const logEntry = {
-        id: Date.now(),
-        timestamp: new Date().toISOString(),
-        type: "Redistribuição Automática de Bloqueados",
-        classId: affectedNames.join(', ') || 'Instrutores bloqueados',
-        before: `${affectedRows.length} turma(s) ainda tinham instrutor bloqueado (${affectedNames.join(', ') || 'bloqueados'}).`,
-        after: `${redistribution.changes.length} posição(ões) redistribuída(s), ${redistribution.balanceMoves.length} ajuste(s) cronológico(s), ${redistribution.unresolved.length} sem substituto. Regra ativa: diferença máxima de ${BALANCE_LIMITS.maxGap} alunos por mês quando possível.`
-    };
-
-    persist(redistribution.rows, substitutions, [logEntry, ...logs], blockedInstructors)
-        .finally(() => {
-            setTimeout(() => {
-                blockedCleanupRunningRef.current = false;
-            }, 1000);
-        });
-
-    if (redistribution.unresolved.length > 0) {
-        showNotify(`Instrutores bloqueados redistribuídos, mas ${redistribution.unresolved.length} posição(ões) ficaram sem substituto seguro.`, "error");
-    } else {
-        showNotify(`${affectedNames.join(' e ')} redistribuído(s). Meta mensal: até ${BALANCE_LIMITS.maxGap} alunos de diferença.`, "success");
+    // SOMENTE DETECÇÃO. Nenhuma redistribuição é executada em segundo plano.
+    if (!user || !data || data.length === 0) return;
+    const affected = data.filter(row =>
+        getBlockRolesForClass(row).some(role => isBlockedInstructorName(row[role]))
+    );
+    if (affected.length > 0) {
+        console.warn(`IA detectou ${affected.length} turma(s) com instrutor bloqueado. Aguardando decisão do usuário.`);
     }
-}, [user, data, blockedInstructors, isSaving]);
+}, [user, data, blockedInstructors]);
 
             const getRankedAnalystOptions = (targetCourse, pendingData = [], customPool = null) => {
                 const stats = {};
@@ -3167,10 +3170,59 @@ useEffect(() => {
                 return { rows, summary, lockedMoveKeys };
             };
 
+            // IA ANALÍTICA: verifica TODOS os instrutores e todas as datas futuras.
+            // Esta rotina apenas recomenda. Não altera nem persiste a distribuição.
+            const systemicAIAlerts = useMemo(() => {
+                if (!data || data.length === 0) return {};
+                const byInstructor = {};
+                const addAlert = (nome, alert) => {
+                    const key = getCanonical(nome);
+                    if (!key) return;
+                    if (!byInstructor[key]) byInstructor[key] = [];
+                    const uniqueKey = `${alert.type}|${alert.dateStr}|${alert.course || ''}|${alert.turmaId || ''}`;
+                    if (!byInstructor[key].some(item => item.uniqueKey === uniqueKey)) {
+                        byInstructor[key].push({ ...alert, uniqueKey });
+                    }
+                };
+                const todayStr = new Date().toISOString().split('T')[0];
+                const dates = getChronologicalBalanceDates(data).filter(dateStr => dateStr >= todayStr);
+                dates.forEach(dateStr => {
+                    const snapshot = getBalanceSnapshot(data, dateStr, uniqueInstrutores);
+                    const targets = getBalanceTargetsForSnapshot(snapshot);
+                    snapshot.forEach(inst => {
+                        if (inst.totalAlunos > targets.effectiveMax) addAlert(inst.nome, { type: 'overload', dateStr, severity: 'high', message: `Carga projetada de ${inst.totalAlunos} alunos, acima do teto equilibrado de ${targets.effectiveMax}.` });
+                        if (targets.isMinPossible && inst.totalAlunos < targets.effectiveMin) addAlert(inst.nome, { type: 'underload', dateStr, severity: 'medium', message: `Carga projetada de ${inst.totalAlunos} alunos, abaixo do piso equilibrado de ${targets.effectiveMin}.` });
+                        Object.entries(inst.cursos || {}).forEach(([courseKey, qtd]) => {
+                            const peers = snapshot.filter(peer => !courseKey.startsWith('Técnica|') || isTecnicaInstructor(peer.nome));
+                            const minQtd = Math.min(...peers.map(peer => (peer.cursos || {})[courseKey] || 0));
+                            if (qtd - minQtd > BALANCE_LIMITS.maxCourseGap || qtd > BALANCE_LIMITS.maxSameCourse) {
+                                addAlert(inst.nome, { type: 'course', dateStr, severity: 'high', course: courseKey.split('|').slice(1).join('|'), message: `${qtd} turma(s) deste curso contra mínimo ${minQtd} entre instrutores elegíveis.` });
+                            }
+                        });
+                    });
+                });
+                data.forEach(row => {
+                    getBlockRolesForClass(row).forEach(role => {
+                        if (isBlockedInstructorName(row[role])) addAlert(row[role], { type: 'blocked', dateStr: row.inicio || todayStr, severity: 'critical', turmaId: row.id, message: `Turma ${row.id} permanece vinculada a instrutor bloqueado. Requer análise e aprovação.` });
+                    });
+                    const autoLogs = normalizeAutoAssignedLogs(row.autoAssignedLogs) || {};
+                    Object.entries(autoLogs).forEach(([role, log]) => {
+                        if (!log || typeof log !== 'object') return;
+                        const name = log.nome;
+                        if (!name) return;
+                        addAlert(name, { type: 'recorded', dateStr: log.effectiveDate || row.inicio || todayStr, severity: 'info', turmaId: row.id, message: `Registro IA na turma ${row.id}: ${log.reason || 'atribuição automatizada registrada'}.` });
+                    });
+                });
+                Object.keys(byInstructor).forEach(nome => byInstructor[nome].sort((a,b) => safeString(a.dateStr).localeCompare(safeString(b.dateStr))));
+                return byInstructor;
+            }, [data, uniqueInstrutores, viewDate, blockedInstructors]);
+
+            const totalSystemicAIAlerts = useMemo(() => Object.values(systemicAIAlerts).reduce((sum, items) => sum + items.length, 0), [systemicAIAlerts]);
+
             const globalInstructorStats = useMemo(() => {
                 const stats = {};
                 uniqueInstrutores.forEach(n => { 
-                    stats[n] = { nome: n, totalAlunos: 0, totalTurmas: 0, autoAssignedCount: 0, cursos: {}, alerts: [] }; 
+                    stats[n] = { nome: n, totalAlunos: 0, totalTurmas: 0, autoAssignedCount: 0, cursos: {}, alerts: [], aiAlertCount: (systemicAIAlerts[n] || []).length }; 
                 });
               
                 data.forEach(row => {
@@ -3205,7 +3257,7 @@ useEffect(() => {
                     }
                 });
                 return stats;
-            }, [processedData, data, uniqueInstrutores, blockedInstructors]);
+            }, [processedData, data, uniqueInstrutores, blockedInstructors, systemicAIAlerts]);
 
             const dashboardInstructors = useMemo(() => {
                 const aggr = {};
@@ -3231,7 +3283,7 @@ useEffect(() => {
                 });
                 let result = Object.values(aggr);
                 if (filters.instrutor) result = result.filter(i => i.nome === filters.instrutor);
-                result = result.map(i => { const global = globalInstructorStats[i.nome]; return { ...i, alerts: global ? global.alerts : [] }; });
+                result = result.map(i => { const global = globalInstructorStats[i.nome]; return { ...i, alerts: global ? global.alerts.filter(a => a.type !== 'purple') : [], aiAlertCount: global ? global.aiAlertCount : 0 }; });
                 return result.sort((a,b) => b.totalAlunos - a.totalAlunos);
             }, [filteredRows, filters.instrutor, globalInstructorStats]);
 
@@ -3507,7 +3559,7 @@ useEffect(() => {
                                     
                                     const { resultItem, autoAssigned } = smartAssignClass(item, newRows, combinedInsts, combinedAnalysts);
                                     if (Object.keys(autoAssigned).length > 0) {
-                                        batchSummary.push({ turmaId: resultItem.id, curso: resultItem.curso, modalidade: resultItem.modalidade, changes: autoAssigned });
+                                        batchSummary.push({ turmaId: resultItem.id, curso: resultItem.curso, modalidade: resultItem.modalidade, isNewClass: !data.some(existing => String(existing.id) === String(resultItem.id)), changes: autoAssigned });
                                     }
                                     newRows.push(resultItem); 
                                 } 
@@ -3647,7 +3699,7 @@ useEffect(() => {
                 setNewClass({ id: '', modalidade: 'Aperfeiçoamento', curso: 'Administrativo', analista: '', alunos: '', inicio: '', termino: '', instrutor1: '', instrutor2: '', instrutor3: '', dataTransferencia: '', dataTransferencia2: '' }); 
                 
                 if (Object.keys(autoAssigned).length > 0) {
-                    setImportSummaryModal([{ turmaId: resultItem.id, curso: resultItem.curso, modalidade: resultItem.modalidade, changes: autoAssigned }]);
+                    setImportSummaryModal([{ turmaId: resultItem.id, curso: resultItem.curso, modalidade: resultItem.modalidade, isNewClass: existingIdx < 0, changes: autoAssigned }]);
                 } else {
                     showNotify("Turma salva com sucesso!");
                 }
@@ -3813,16 +3865,14 @@ useEffect(() => {
                         tagA = 'P2'; tagB = 'P1';
                         let temp2 = isInst2; isInst2 = isInst3; isInst3 = temp2;
                     }
-
+                    if (target > end) { historyClasses.push({...cls, statusDetail: 'Finalizada'}); return; }
                     if (target < start) {
-                        if (isInst1 || isInst2 || isInst3) { 
+                        if (isInst1 || isInst2 || isInst3) {
                             let prev = isInst1 ? "Titular (Início)" : (isInst2 ? `Receberá ${tagA}` : `Receberá ${tagB}`);
-                            futureClasses.push({...cls, statusDetail: `Agendada (${prev})`}); 
+                            futureClasses.push({...cls, statusDetail: `Abertura de nova turma (${prev})`});
                         }
                         return;
                     }
-
-                    if (target > end) { historyClasses.push({...cls, statusDetail: 'Finalizada'}); return; }
                     
                     if (isInst1) {
                          if (transfDate && target > transfDate) { historyClasses.push({...cls, statusDetail: `Repassado (${tagA})`});
@@ -3872,6 +3922,7 @@ useEffect(() => {
                 txt += "===========================================\n\n";
                 
                 importSummaryModal.forEach(item => {
+                    txt += `${item.isNewClass ? '🆕 ABERTURA DE NOVA TURMA' : 'AJUSTE EM TURMA EXISTENTE'}\n`;
                     txt += `Turma: ${item.turmaId}\n`;
                     txt += `Curso: ${item.curso} (${item.modalidade})\n`;
                     txt += `Intervenções em Vagas Abertas:\n`;
@@ -4023,6 +4074,18 @@ useEffect(() => {
                     histFiltered = [...org.historyClasses];
                 }
 
+                // Resumo operacional: não inclui turmas cujo término já passou.
+                const isFinishedForSummary = (turma) => {
+                    const endStr = safeString(turma && turma.termino);
+                    return endStr.length === 10 && new Date(endStr + 'T23:59:59') < accessDate;
+                };
+                const onlyOpenClasses = (arr) => (arr || []).filter(turma => !isFinishedForSummary(turma));
+                actFiltered = onlyOpenClasses(actFiltered);
+                incFiltered = onlyOpenClasses(incFiltered);
+                outFiltered = onlyOpenClasses(outFiltered);
+                futFiltered = onlyOpenClasses(futFiltered);
+                histFiltered = [];
+
                 // NOVO: Aplica o filtro de Analista caso tenha sido selecionado!
                 if (period && period.analista) {
                     const filterFn = (arr) => arr.filter(t => normalizeText(t.analista) === normalizeText(period.analista));
@@ -4045,7 +4108,7 @@ useEffect(() => {
                     
                     block += `<table style="width: 100%; border-collapse: collapse; background-color: #ffffff;">`;
                     classes.forEach((t, index) => {
-                        let info = infoType === 'status' ? t.statusDetail : (infoType === 'transfer' ? t.transferNote : t.statusDetail);
+                        let info = infoType === 'status' ? t.statusDetail : (infoType === 'transfer' ? t.transferNote : (infoType === 'opening' ? `Abertura em ${formatDatePTBR(t.inicio)}` : t.statusDetail));
                         let borderStyle = index < classes.length - 1 ? 'border-bottom: 1px solid #f3f4f6;' : '';
                         
                         block += `<tr>
@@ -4066,8 +4129,7 @@ useEffect(() => {
                 html += buildBlock('📌 Turmas Atuais (Em Vigência)', '#1d4ed8', '#eff6ff', actFiltered, 'status'); 
                 html += buildBlock('📥 Turmas A Receber', '#c2410c', '#fff7ed', incFiltered, 'transfer'); 
                 html += buildBlock('📤 Turmas A Repassar', '#047857', '#ecfdf5', outFiltered, 'transfer'); 
-                html += buildBlock('⏳ Turmas Futuras (Agendadas)', '#4338ca', '#eef2ff', futFiltered, 'inicio'); 
-                html += buildBlock('✅ Turmas Finalizadas / Já Repassadas', '#475569', '#f1f5f9', histFiltered, 'status'); 
+                html += buildBlock('🆕 Abertura de Novas Turmas (Agendadas)', '#4338ca', '#eef2ff', futFiltered, 'opening'); 
                 
                 if (actFiltered.length === 0 && incFiltered.length === 0 && outFiltered.length === 0 && futFiltered.length === 0 && histFiltered.length === 0) {
                     html += `<div style="padding: 15px; border: 1px dashed #cbd5e1; border-radius: 6px; background-color: #f8fafc; text-align: center; color: #64748b; font-size: 12px; margin-bottom: 12px;">Nenhuma turma vinculada a você ativa ou prevista para este filtro/período.</div>`;
@@ -4301,15 +4363,15 @@ useEffect(() => {
                             <div className="flex items-center gap-6">
                                 <button onClick={handleFullBackupExport} className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-xs flex gap-1 items-center shadow-lg transition border border-indigo-500 animate-pulse hover:animate-none"><Icons.Sync /> Backup</button>
                                 {LOCAL_TEST_MODE && <span className="px-3 py-2 bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold text-xs uppercase tracking-wide">Modo Local</span>}
-                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos (v100)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
+                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos (v106)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
                                 
                                 {/* BOTÕES DE AÇÃO PRINCIPAIS */}
                                 <div className="flex gap-2">
-                                    <button onClick={autoFillEmptySlots} className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105 border border-emerald-400" title="Preencher Instrutor 1, 2 ou 3 que estiverem em branco">
+                                    <button onClick={autoFillEmptySlots} className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105 border border-purple-400" title="Automação IA: preencher vagas somente após confirmação">
                                         <Icons.UserPlus /> Preencher Vazios (IA)
                                     </button> 
                                     
-                                    <button onClick={() => openSimulator('all', false)} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105" title={`Abre o Simulador de Equilíbrio sugerindo mudanças`}>
+                                    <button onClick={() => openSimulator('all', false)} className="px-4 py-2 bg-purple-700 text-white rounded-lg hover:bg-purple-800 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105" title={`Abre o simulador sem aplicar mudanças`}>
                                         <Icons.Robot /> Simulador IA
                                     </button>
 
@@ -4343,6 +4405,11 @@ useEffect(() => {
                     </div>
 
                     <main className="max-w-7xl mx-auto w-full px-6 py-8 flex-1">
+                        {totalSystemicAIAlerts > 0 && (
+                            <button onClick={() => setAiAlertModal({ scope: 'system' })} className="fixed bottom-6 right-6 z-50 bg-purple-700 hover:bg-purple-800 text-white rounded-full shadow-2xl px-4 py-3 flex items-center gap-2 border-2 border-purple-300 no-print" title="Abrir central de alertas da IA">
+                                <Icons.Robot /><span className="font-black text-xs">IA</span><span className="bg-white text-purple-800 rounded-full min-w-6 h-6 px-1 flex items-center justify-center text-[10px] font-black">{totalSystemicAIAlerts}</span>
+                            </button>
+                        )}
                         {activeTab === 'relatorios' ? (
                             <div className="fade-in bg-white p-6 rounded-xl shadow-sm border border-gray-200 printable-content">
                                 {reportType === 'estatisticas' ? (
@@ -4546,7 +4613,10 @@ useEffect(() => {
                                 </h3>
                                 <p className="text-xs text-slate-400 font-semibold uppercase tracking-tighter">Instrutor</p>
                             </div>
-                            <button onClick={() => openInstructorModal(inst)} className="p-2 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-600 hover:text-white transition shadow-sm" title="Abrir Mega Painel"><Icons.Maximize /></button>
+                            <div className="flex items-center gap-2">
+                                {inst.aiAlertCount > 0 && <button onClick={() => setAiAlertModal({ scope: 'instructor', instructor: inst.nome })} className="relative p-2 bg-purple-100 text-purple-700 rounded-full hover:bg-purple-700 hover:text-white transition shadow-sm border border-purple-300" title="Ver análises e alertas da IA"><Icons.Robot /><span className="absolute -top-2 -right-2 bg-purple-700 text-white rounded-full text-[8px] min-w-5 h-5 px-1 flex items-center justify-center font-black">{inst.aiAlertCount}</span></button>}
+                                <button onClick={() => openInstructorModal(inst)} className="p-2 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-600 hover:text-white transition shadow-sm" title="Abrir Mega Painel"><Icons.Maximize /></button>
+                            </div>
                         </div>
                         
                         {inst.alerts.length > 0 && (<div className="mb-4 space-y-2">{inst.alerts.map((alert, idx) => (<div key={idx} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold shadow-sm ${alert.type === 'red' ? 'bg-red-100 text-red-800 border-l-4 border-red-500' : alert.type === 'purple' ? 'bg-purple-100 text-purple-800 border-l-4 border-purple-500' : 'bg-orange-100 text-orange-800 border-l-4 border-orange-500'}`}>{alert.type === 'purple' ? <Icons.Robot /> : <Icons.Alert />} <span>{safeString(alert.msg)}</span></div>))}</div>)}
@@ -4941,7 +5011,56 @@ useEffect(() => {
                         </div>
                     )}
 
-                    {/* NOVO MODAL: INCLUSÃO / ONBOARDING DE INSTRUTOR */}
+                    {aiAlertModal && (
+                        <div className="modal-overlay z-[16000] no-print p-4">
+                            <div className="modal-window ai-center-window bg-white">
+                                <div className="modal-header ai-center-header bg-purple-50 border-purple-200">
+                                    <span className="flex items-center gap-2 text-purple-900"><Icons.Robot /> Central de Análises da IA</span>
+                                    <button onClick={() => setAiAlertModal(null)} className="p-2 text-purple-700 hover:bg-purple-100 rounded-full">✕</button>
+                                </div>
+
+                                <div className="ai-center-shell bg-slate-50">
+                                    <div className="ai-center-intro px-6 pt-5 pb-3">
+                                        <div className="bg-purple-100 border border-purple-300 rounded-lg p-3 text-xs text-purple-900 font-semibold">
+                                            A IA apenas analisa e recomenda. Nenhum ajuste abaixo será aplicado sem abrir o simulador e receber confirmação explícita do usuário.
+                                        </div>
+                                    </div>
+
+                                    <div className="ai-center-scroll px-6 py-3 custom-scrollbar">
+                                        <div className="ai-center-list pb-3">
+                                            {(aiAlertModal.scope === 'instructor'
+                                                ? [[aiAlertModal.instructor, systemicAIAlerts[aiAlertModal.instructor] || []]]
+                                                : Object.entries(systemicAIAlerts)
+                                            ).map(([nome, alerts]) => alerts.length > 0 && (
+                                                <div key={nome} className="ai-instructor-card bg-white border border-purple-200 rounded-xl shadow-sm">
+                                                    <div className="bg-purple-50 px-4 py-3 flex items-center justify-between gap-3 border-b border-purple-100">
+                                                        <b className="text-purple-900 truncate">{nome}</b>
+                                                        <span className="text-[10px] bg-purple-700 text-white rounded-full px-2 py-1 font-black whitespace-nowrap">{alerts.length} alerta(s)</span>
+                                                    </div>
+                                                    <div className="p-3 space-y-2">
+                                                        {alerts.map((alert, idx) => (
+                                                            <div key={idx} className="ai-alert-row border-l-4 border-purple-500 bg-slate-50 rounded p-3 text-xs">
+                                                                <div className="font-black text-purple-800 leading-5">
+                                                                    {formatDatePTBR(alert.dateStr)} • {alert.type === 'course' ? `Curso: ${alert.course}` : alert.type === 'overload' ? 'Sobrecarga futura' : alert.type === 'underload' ? 'Carga abaixo do equilíbrio' : alert.type === 'blocked' ? 'Instrutor bloqueado' : 'Registro de IA'}
+                                                                </div>
+                                                                <div className="text-slate-700 mt-1 leading-5 break-words">{alert.message}</div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="ai-center-footer flex justify-end gap-2 bg-white border-t border-slate-200 px-6 py-4">
+                                        <button onClick={() => setAiAlertModal(null)} className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg font-bold hover:bg-slate-300">Fechar</button>
+                                        <button onClick={() => { setAiAlertModal(null); openSimulator('all', false); }} className="px-4 py-2 bg-purple-700 text-white rounded-lg font-bold flex items-center gap-2 hover:bg-purple-800"><Icons.Robot /> Simular ajustes, sem aplicar</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+{/* NOVO MODAL: INCLUSÃO / ONBOARDING DE INSTRUTOR */}
 {isNewInstModalOpen && (
     <div className="modal-overlay z-[14000]">
         <div className="modal-window max-w-5xl bg-white shadow-2xl">
