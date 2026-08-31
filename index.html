@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>S.G.T - Gestão de Turmas (v107 Simulador Otimizado)</title>
+    <title>S.G.T - Gestão de Turmas (v108 Simulador Rápido e Estável)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -455,7 +455,6 @@
             const [emailPeriod, setEmailPeriod] = useState({ start: '', end: '' });
             const [aiAlertModal, setAiAlertModal] = useState(null);
             const [isSimulatorCalculating, setIsSimulatorCalculating] = useState(false);
-            const [selectedClassDetail, setSelectedClassDetail] = useState(null);
             const simulatorRunningRef = useRef(false);
 
             // === MODO TESTE LOCAL: carrega somente dados do navegador ===
@@ -587,8 +586,27 @@
 
             
             const handleOpenEdit = (classData) => {
-                // Adicionamos o 'originalId' para o sistema lembrar qual era o número antes da edição
-                setEditingClass({...classData, modalidade: getSafeModalidade(classData), originalId: classData.id});
+                const requestedId = safeString(classData && classData.id).trim();
+                const fullClass = data.find(row => safeString(row.id).trim() === requestedId)
+                    || processedData.find(row => safeString(row.id).trim() === requestedId)
+                    || classData;
+                if (!fullClass) {
+                    showNotify("Não foi possível localizar os dados completos da turma.", "error");
+                    return;
+                }
+                setEditingClass({
+                    ...fullClass,
+                    id: safeString(fullClass.id), originalId: safeString(fullClass.id),
+                    modalidade: getSafeModalidade(fullClass),
+                    instrutor1: safeString(fullClass.instrutor1).trim(),
+                    instrutor2: safeString(fullClass.instrutor2).trim(),
+                    instrutor3: safeString(fullClass.instrutor3).trim(),
+                    analista: safeString(fullClass.analista).trim(),
+                    inicio: fmtDate(fullClass.inicio), termino: fmtDate(fullClass.termino),
+                    dataTransferencia: fmtDate(fullClass.dataTransferencia),
+                    dataTransferencia2: fmtDate(fullClass.dataTransferencia2),
+                    autoAssignedLogs: normalizeAutoAssignedLogs(fullClass.autoAssignedLogs)
+                });
                 setIsEditModalOpen(true);
             };
 
@@ -630,8 +648,10 @@
                 const newData = data.map(d => {
                     if (String(d.id) === String(editingClass.originalId)) {
                         const updated = { ...editingClass, alunos: parseInt(editingClass.alunos) || 0 };
-                        delete updated.originalId; 
-                        delete updated.autoAssignedLogs; 
+                        delete updated.originalId;
+                        const normalizedLogs = normalizeAutoAssignedLogs(updated.autoAssignedLogs);
+                        if (normalizedLogs && Object.keys(normalizedLogs).length > 0) updated.autoAssignedLogs = normalizedLogs;
+                        else delete updated.autoAssignedLogs;
                         return updated;
                     }
                     return d;
@@ -2557,16 +2577,13 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                         if (isAtualPreenchido && role === papelAtualDaLinhaDoTempo) continue;
 
                         const currentValue = String(row[role] || '').trim();
+                        const isEmptyRole = currentValue === '' || currentValue.toLowerCase().includes('nao atribuido') || currentValue === 'undefined';
+                        if (!isEmptyRole) continue;
                         const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
-                        
                         const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], arrayReais, null, tempDb);
-                        
                         if (options && options.length > 0) {
-                            const bestOption = options[0].nome;
-                            if (currentValue === '' || currentValue.toLowerCase().includes('nao atribuido') || normalizeText(currentValue) !== normalizeText(bestOption)) {
-                                row[role] = bestOption;
-                                rowChanged = true;
-                            }
+                            row[role] = options[0].nome;
+                            rowChanged = true;
                         }
                     }
 
@@ -2601,11 +2618,18 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                 }
                 // Executa o mesmo motor cronológico que será usado na aplicação real.
                 const simulationPool = arrayReais;
-                const priorityDates = getCriticalChronologicalPriorityDates(tempDb, simulationPool, 6);
+                const priorityDates = getCriticalChronologicalPriorityDates(tempDb, simulationPool, 4);
                 const chronologicalResult = executeChronologicalAutoBalance(tempDb, lockedEventKeys, simulationPool, {
-                    priorityDateList: priorityDates, maxPriorityDates: 6,
-                    maxChronologicalIterations: 16, maxRepairMoves: 18, maxRepairIssues: 6,
-                    priorityRepairMoves: 6, priorityRepairCycles: 1, priorityMaxDonors: 4,
+                    priorityDateList: priorityDates,
+                    maxPriorityDates: 4,
+                    skipChronologicalPass: true,
+                    maxChronologicalIterations: 0,
+                    maxRepairMoves: 6,
+                    maxRepairIssues: 4,
+                    priorityRepairMoves: 3,
+                    priorityRepairCycles: 1,
+                    priorityMaxDonors: 3,
+                    maxDonors: 3,
                     protectPriorityDate: false
                 });
                 tempDb = chronologicalResult.rows;
@@ -2630,27 +2654,27 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
 
             const openSimulator = (scopeToUse = 'all', isNewScenario = false, eventsOverride = null) => {
                 if (simulatorRunningRef.current) {
-                    showNotify('A simulação já está sendo calculada. Aguarde a conclusão.', 'error');
+                    showNotify("A simulação já está sendo calculada. Aguarde.", "error");
                     return;
                 }
                 if (!data || data.length === 0) {
-                    showNotify('Não há turmas na base de dados para simular.', 'error');
+                    showNotify("Não há turmas para simular.", "error");
                     return;
                 }
                 simulatorRunningRef.current = true;
                 setIsSimulatorCalculating(true);
                 setAiAlertModal(null);
-                setTimeout(() => {
+                window.setTimeout(() => {
                     try {
                         calculateSimulatorScenario(scopeToUse, isNewScenario, eventsOverride);
                     } catch (error) {
-                        console.error('Erro ao calcular simulador:', error);
-                        showNotify(`Não foi possível concluir a simulação: ${safeString(error && error.message) || 'erro inesperado'}.`, 'error');
+                        console.error("Falha controlada no simulador:", error);
+                        showNotify(`Falha ao simular: ${safeString(error && error.message) || 'erro inesperado'}.`, "error");
                     } finally {
                         simulatorRunningRef.current = false;
                         setIsSimulatorCalculating(false);
                     }
-                }, 80);
+                }, 120);
             };
 
             const applySimulation = () => {
@@ -3301,8 +3325,10 @@ useEffect(() => {
                     const isAutoAssignedForThisInstructor = row.autoAssignedLogs && Object.values(row.autoAssignedLogs).some(log => getCanonical(typeof log === 'object' ? log.nome : log) === inst);
                     const myLogEntry = row.autoAssignedLogs ? Object.values(row.autoAssignedLogs).find(log => getCanonical(typeof log === 'object' ? log.nome : log) === inst) : null;
                     
-                    aggr[inst].turmasPreview.push({
-                        ...row, 
+                    aggr[inst].turmasPreview.push({ 
+                        id: row.id, 
+                        curso: row.curso, 
+                        modalidade: row.modalidade, 
                         isAuto: isAutoAssignedForThisInstructor,
                         autoReason: myLogEntry && typeof myLogEntry === 'object' ? myLogEntry.reason : null
                     });
@@ -3934,24 +3960,6 @@ useEffect(() => {
             };
 
             const openInstructorModal = (instPartial) => { const detailed = getOrganizedInstructorData(instPartial.nome); if (detailed) { setSelectedInstructorDetail(detailed); } };
-            const openClassDetail = (classRef) => {
-                const classId = safeString(classRef && classRef.id).trim();
-                const fullClass = data.find(row => safeString(row.id).trim() === classId)
-                    || processedData.find(row => safeString(row.id).trim() === classId)
-                    || classRef;
-                if (!fullClass) {
-                    showNotify('Não foi possível localizar os dados completos da turma.', 'error');
-                    return;
-                }
-                const targetDate = new Date(viewDate + 'T00:00:00');
-                const activeInfo = getActiveInfoOnDate(fullClass, targetDate);
-                setSelectedClassDetail({
-                    ...fullClass,
-                    modalidade: getSafeModalidade(fullClass),
-                    instrutorAtual: activeInfo.inst || fullClass.instrutorAtual || '',
-                    status: activeInfo.status || fullClass.status || ''
-                });
-            };
 
             const handleOpenTransferModal = (turmaObj) => {
                 setNewSub({ ...newSub, isDefinitive: false, turmaId: String(turmaObj.id), instrutorAusente: selectedInstructorDetail.nome });
@@ -4407,7 +4415,7 @@ useEffect(() => {
                             <div className="flex items-center gap-6">
                                 <button onClick={handleFullBackupExport} className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-xs flex gap-1 items-center shadow-lg transition border border-indigo-500 animate-pulse hover:animate-none"><Icons.Sync /> Backup</button>
                                 {LOCAL_TEST_MODE && <span className="px-3 py-2 bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold text-xs uppercase tracking-wide">Modo Local</span>}
-                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos (v107)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
+                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos (v108)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
                                 
                                 {/* BOTÕES DE AÇÃO PRINCIPAIS */}
                                 <div className="flex gap-2">
@@ -4680,7 +4688,7 @@ useEffect(() => {
                             <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-2">Turmas Neste Cenário</h4>
                             <div className="max-h-32 overflow-y-auto flex flex-col gap-1 pr-1 custom-scrollbar">
                                 {inst.turmasPreview.map(t => (
-                                    <button type="button" key={t.id} onClick={() => openClassDetail(t)} className="w-full text-left flex flex-col bg-slate-50 px-2 py-1.5 rounded border border-slate-100 hover:bg-blue-50 hover:border-blue-200 cursor-pointer transition" title="Abrir informações completas da turma">
+                                    <div key={t.id} className="flex flex-col bg-slate-50 px-2 py-1.5 rounded border border-slate-100 hover:bg-slate-100 cursor-default">
                                         <div className="text-[11px] flex justify-between items-center">
                                             <span className="font-bold text-slate-700 flex items-center gap-1">
                                                 {t.id}
@@ -4693,7 +4701,7 @@ useEffect(() => {
                                                 ↳ {t.autoReason}
                                             </div>
                                         )}
-                                    </button>
+                                    </div>
                                 ))}
                                 {inst.turmasPreview.length === 0 && <span className="text-[11px] text-slate-400 italic">Nenhuma turma ativa nesta data.</span>}
                             </div>
@@ -4776,10 +4784,10 @@ useEffect(() => {
 
 {isSimulatorCalculating && (
     <div className="modal-overlay z-[20000] no-print">
-        <div className="bg-white rounded-2xl shadow-2xl border border-purple-200 p-8 flex flex-col items-center gap-4 max-w-md text-center">
-            <div className="loading-icon text-purple-700"><Icons.Refresh /></div>
-            <h3 className="font-black text-purple-900 text-lg">Calculando cenário de equilíbrio</h3>
-            <p className="text-sm text-slate-600">A IA está avaliando turmas, alunos, cursos, instrutores, analistas e datas futuras. Nenhuma alteração será aplicada automaticamente.</p>
+        <div className="bg-white rounded-2xl shadow-2xl border border-purple-200 p-8 max-w-md text-center">
+            <div className="loading-icon text-purple-700 mx-auto w-fit"><Icons.Refresh /></div>
+            <h3 className="font-black text-purple-900 text-lg mt-4">Preparando simulação</h3>
+            <p className="text-sm text-slate-600 mt-2">Analisando o cenário completo com limites de segurança. Nenhuma mudança será aplicada sem sua confirmação.</p>
         </div>
     </div>
 )}
@@ -5064,32 +5072,6 @@ useEffect(() => {
                         </div>
                     )}
 
-                    {selectedClassDetail && (
-                        <div className="modal-overlay z-[15000] no-print p-4">
-                            <div className="modal-window max-w-4xl w-full bg-white">
-                                <div className="modal-header bg-blue-50 border-blue-200">
-                                    <span className="flex items-center gap-2 text-blue-900"><Icons.FileText /> Turma {safeString(selectedClassDetail.id)}</span>
-                                    <button onClick={() => setSelectedClassDetail(null)} className="p-2 text-blue-700 hover:bg-blue-100 rounded-full">✕</button>
-                                </div>
-                                <div className="modal-body p-6 gap-5">
-                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                                        {[['Curso', selectedClassDetail.curso], ['Modalidade', selectedClassDetail.modalidade], ['Analista', selectedClassDetail.analista], ['Alunos', selectedClassDetail.alunos], ['Início', formatDatePTBR(selectedClassDetail.inicio)], ['Término', formatDatePTBR(selectedClassDetail.termino)], ['Status', selectedClassDetail.status], ['Instrutor atual', selectedClassDetail.instrutorAtual]].map(([label,value]) => <div key={label} className="bg-white border border-slate-200 rounded-xl p-3"><div className="text-[9px] uppercase font-black text-slate-400">{label}</div><div className="text-sm font-bold text-slate-800 mt-1 break-words">{safeString(value) || 'Não informado'}</div></div>)}
-                                    </div>
-                                    <div className="bg-white border border-slate-200 rounded-xl p-4">
-                                        <h3 className="font-black text-slate-700 text-xs uppercase mb-3">Cadeia completa de instrutores</h3>
-                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                            <div className="border border-blue-200 bg-blue-50 rounded-lg p-3"><b className="text-blue-900">Instrutor 1</b><div className="mt-1 font-semibold">{safeString(selectedClassDetail.instrutor1) || 'Não atribuído'}</div><div className="text-[10px] text-blue-700 mt-1">Início: {formatDatePTBR(selectedClassDetail.inicio) || 'Não informado'}</div></div>
-                                            <div className="border border-green-200 bg-green-50 rounded-lg p-3"><b className="text-green-900">Instrutor 2</b><div className="mt-1 font-semibold">{safeString(selectedClassDetail.instrutor2) || 'Não atribuído'}</div><div className="text-[10px] text-green-700 mt-1">Passagem 1: {formatDatePTBR(selectedClassDetail.dataTransferencia) || 'Não informada'}</div></div>
-                                            <div className="border border-purple-200 bg-purple-50 rounded-lg p-3"><b className="text-purple-900">Instrutor 3</b><div className="mt-1 font-semibold">{safeString(selectedClassDetail.instrutor3) || 'Não aplicável/atribuído'}</div><div className="text-[10px] text-purple-700 mt-1">Passagem 2: {formatDatePTBR(selectedClassDetail.dataTransferencia2) || 'Não informada'}</div></div>
-                                        </div>
-                                    </div>
-                                    {selectedClassDetail.autoAssignedLogs && <div className="bg-purple-50 border border-purple-200 rounded-xl p-4"><h3 className="font-black text-purple-900 text-xs uppercase mb-2">Registros da IA</h3>{Object.entries(normalizeAutoAssignedLogs(selectedClassDetail.autoAssignedLogs) || {}).map(([role,log]) => <div key={role} className="text-xs text-purple-800 py-1"><b>{role.replace('instrutor','Instrutor ')}:</b> {safeString(typeof log === 'object' ? log.nome : log)} {typeof log === 'object' && log.reason ? `• ${log.reason}` : ''}</div>)}</div>}
-                                    <div className="flex justify-end gap-2"><button onClick={() => setSelectedClassDetail(null)} className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg font-bold">Fechar</button><button onClick={() => { const row = selectedClassDetail; setSelectedClassDetail(null); handleOpenEdit(row); }} className="px-4 py-2 bg-blue-700 text-white rounded-lg font-bold flex items-center gap-2"><Icons.Edit /> Editar turma</button></div>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
                     {aiAlertModal && (
                         <div className="modal-overlay z-[16000] no-print p-4">
                             <div className="modal-window ai-center-window bg-white">
@@ -5350,8 +5332,9 @@ useEffect(() => {
                                         <div className="grid grid-cols-2 gap-6 bg-blue-50/50 p-4 rounded-xl border border-blue-100">
                                             <div className="input-wrapper">
                                                 <label className="input-label text-blue-700">Instrutor 1</label>
-                                                <select className="input-field border-blue-200" value={editingClass.instrutor1} onChange={e => setEditingClass({...editingClass, instrutor1: e.target.value})}>
+                                                <select className="input-field border-blue-200" value={safeString(editingClass.instrutor1)} onChange={e => setEditingClass({...editingClass, instrutor1: e.target.value})}>
                                                     <option value="">Selecione...</option>
+                                                    {editingClass.instrutor1 && <option value={editingClass.instrutor1}>Atual: {safeString(editingClass.instrutor1)}</option>}
                                                     {editingClass.curso ? getRankedInstructorOptions(editingClass.curso, [editingClass.instrutor2, editingClass.instrutor3], 'instrutor1', editingClass.modalidade, [], null, editingClass.inicio).map(opt => (
                                                         <option key={opt.nome} value={opt.nome}>{opt.emoji} {safeString(opt.nome)} {safeString(opt.tip)}</option>
                                                     )) : uniqueInstrutores.map(i => <option key={i} value={i}>{safeString(i)}</option>)}
@@ -5363,8 +5346,9 @@ useEffect(() => {
                                             </div>
                                             <div className="input-wrapper">
                                                 <label className="input-label text-green-700">Instrutor 2</label>
-                                                <select className="input-field border-green-200" value={editingClass.instrutor2} onChange={e => setEditingClass({...editingClass, instrutor2: e.target.value})}>
+                                                <select className="input-field border-green-200" value={safeString(editingClass.instrutor2)} onChange={e => setEditingClass({...editingClass, instrutor2: e.target.value})}>
                                                     <option value="">Selecione...</option>
+                                                    {editingClass.instrutor2 && <option value={editingClass.instrutor2}>Atual: {safeString(editingClass.instrutor2)}</option>}
                                                     {editingClass.curso ? getRankedInstructorOptions(editingClass.curso, [editingClass.instrutor1, editingClass.instrutor3], 'instrutor2', editingClass.modalidade, [], null, editingClass.dataTransferencia).map(opt => (
                                                         <option key={opt.nome} value={opt.nome}>{opt.emoji} {safeString(opt.nome)} {safeString(opt.tip)}</option>
                                                     )) : uniqueInstrutores.map(i => <option key={i} value={i}>{safeString(i)}</option>)}
@@ -5380,8 +5364,9 @@ useEffect(() => {
                                                 </div>
                                                 <div className="input-wrapper">
                                                     <label className="input-label text-purple-700">Instrutor 3</label>
-                                                    <select className="input-field border-purple-200" value={editingClass.instrutor3} onChange={e => setEditingClass({...editingClass, instrutor3: e.target.value})}>
+                                                    <select className="input-field border-purple-200" value={safeString(editingClass.instrutor3)} onChange={e => setEditingClass({...editingClass, instrutor3: e.target.value})}>
                                                         <option value="">Selecione...</option>
+                                                        {editingClass.instrutor3 && <option value={editingClass.instrutor3}>Atual: {safeString(editingClass.instrutor3)}</option>}
                                                         {getRankedInstructorOptions(editingClass.curso, [editingClass.instrutor1, editingClass.instrutor2], 'instrutor3', editingClass.modalidade, [], null, editingClass.dataTransferencia2).map(opt => (
                                                             <option key={opt.nome} value={opt.nome}>{opt.emoji} {safeString(opt.nome)} {safeString(opt.tip)}</option>
                                                         ))}
