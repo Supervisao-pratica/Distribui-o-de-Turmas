@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>S.G.T - Gestão de Turmas (v109 Simulador Ágil)</title>
+    <title>S.G.T - Gestão de Turmas (v111 Estatísticas Profissionais)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -391,6 +391,7 @@
             
             const [dashboardView, setDashboardView] = useState('instructors');
             const [reportType, setReportType] = useState('geral');
+            const [statsPeriod, setStatsPeriod] = useState({ start: '', end: '', statuses: { Agendado: true, Ativo: true, Transferido: true, Finalizado: true }, analyst: '', course: '', instructor: '' });
             const fileInputRef = useRef(null);
             const blockedCleanupRunningRef = useRef(false);
 
@@ -454,8 +455,6 @@
             const [emailConfigModal, setEmailConfigModal] = useState(false);
             const [emailPeriod, setEmailPeriod] = useState({ start: '', end: '' });
             const [aiAlertModal, setAiAlertModal] = useState(null);
-            const [isSimulatorCalculating, setIsSimulatorCalculating] = useState(false);
-            const simulatorRunningRef = useRef(false);
 
             // === MODO TESTE LOCAL: carrega somente dados do navegador ===
             useEffect(() => {
@@ -586,24 +585,8 @@
 
             
             const handleOpenEdit = (classData) => {
-                const requestedId = safeString(classData && classData.id).trim();
-                const fullClass = data.find(row => safeString(row.id).trim() === requestedId)
-                    || processedData.find(row => safeString(row.id).trim() === requestedId)
-                    || classData;
-                if (!fullClass) { showNotify("Não foi possível localizar os dados completos da turma.", "error"); return; }
-                setEditingClass({
-                    ...fullClass,
-                    id: safeString(fullClass.id), originalId: safeString(fullClass.id),
-                    modalidade: getSafeModalidade(fullClass),
-                    instrutor1: safeString(fullClass.instrutor1).trim(),
-                    instrutor2: safeString(fullClass.instrutor2).trim(),
-                    instrutor3: safeString(fullClass.instrutor3).trim(),
-                    analista: safeString(fullClass.analista).trim(),
-                    inicio: fmtDate(fullClass.inicio), termino: fmtDate(fullClass.termino),
-                    dataTransferencia: fmtDate(fullClass.dataTransferencia),
-                    dataTransferencia2: fmtDate(fullClass.dataTransferencia2),
-                    autoAssignedLogs: normalizeAutoAssignedLogs(fullClass.autoAssignedLogs)
-                });
+                // Adicionamos o 'originalId' para o sistema lembrar qual era o número antes da edição
+                setEditingClass({...classData, modalidade: getSafeModalidade(classData), originalId: classData.id});
                 setIsEditModalOpen(true);
             };
 
@@ -645,10 +628,8 @@
                 const newData = data.map(d => {
                     if (String(d.id) === String(editingClass.originalId)) {
                         const updated = { ...editingClass, alunos: parseInt(editingClass.alunos) || 0 };
-                        delete updated.originalId;
-                        const normalizedLogs = normalizeAutoAssignedLogs(updated.autoAssignedLogs);
-                        if (normalizedLogs && Object.keys(normalizedLogs).length > 0) updated.autoAssignedLogs = normalizedLogs;
-                        else delete updated.autoAssignedLogs;
+                        delete updated.originalId; 
+                        delete updated.autoAssignedLogs; 
                         return updated;
                     }
                     return d;
@@ -946,6 +927,55 @@ const handleClearAllData = () => {
                     }));
                 }).sort((a, b) => String(a.turmaId).localeCompare(String(b.turmaId)));
             }, [data]);
+
+            const statisticsAnalysis = useMemo(() => {
+                const classify = (row, start, end) => {
+                    const dStart = safeString(row.inicio).length === 10 ? new Date(row.inicio + 'T00:00:00') : null;
+                    const dEnd = safeString(row.termino).length === 10 ? new Date(row.termino + 'T23:59:59') : null;
+                    if (dStart && dStart > end) return 'Agendado';
+                    if (dEnd && dEnd < start) return 'Finalizado';
+                    const p1 = safeString(row.dataTransferencia).length === 10 ? new Date(row.dataTransferencia + 'T00:00:00') : null;
+                    const p2 = safeString(row.dataTransferencia2).length === 10 ? new Date(row.dataTransferencia2 + 'T00:00:00') : null;
+                    if ((p1 && p1 <= end) || (p2 && p2 <= end)) return 'Transferido';
+                    return 'Ativo';
+                };
+                if (!statsPeriod.start || !statsPeriod.end || statsPeriod.end < statsPeriod.start) return { rows: [], analysts: [], courses: [], instructors: [], summary: [], courseMatrix: [], relation: {}, instructorCourses: [] };
+                const start = new Date(statsPeriod.start + 'T00:00:00');
+                const end = new Date(statsPeriod.end + 'T23:59:59');
+                const enriched = data.map(row => {
+                    const active = getActiveInfoOnDate(row, end);
+                    return { ...row, statStatus: classify(row,start,end), statInstructor: active.inst || getCanonical(row.instrutorAtual) || getCanonical(row.instrutor1) || 'Não atribuído' };
+                });
+                const analysts = [...new Set(enriched.map(r => getCanonical(r.analista) || 'Não informado'))].sort();
+                const courses = [...new Set(enriched.map(r => safeString(r.curso) || 'Não informado'))].sort();
+                const instructors = [...new Set(enriched.map(r => r.statInstructor))].sort();
+                const rows = enriched.filter(r => statsPeriod.statuses[r.statStatus])
+                    .filter(r => !statsPeriod.analyst || (getCanonical(r.analista)||'Não informado') === statsPeriod.analyst)
+                    .filter(r => !statsPeriod.course || (safeString(r.curso)||'Não informado') === statsPeriod.course)
+                    .filter(r => !statsPeriod.instructor || r.statInstructor === statsPeriod.instructor);
+                const aMap={}, matrix={}, relation={}, iCourses={};
+                rows.forEach(r => {
+                    const a=getCanonical(r.analista)||'Não informado', c=safeString(r.curso)||'Não informado', i=r.statInstructor, students=parseInt(r.alunos)||0;
+                    if(!aMap[a]) aMap[a]={analista:a,turmas:0,alunos:0,inst:new Set()}; aMap[a].turmas++; aMap[a].alunos+=students; if(i!=='Não atribuído') aMap[a].inst.add(i);
+                    if(!matrix[c]) matrix[c]={}; matrix[c][a]=(matrix[c][a]||0)+1;
+                    if(!relation[a]) relation[a]={}; if(!relation[a][i]) relation[a][i]={instrutor:i,turmas:0,alunos:0}; relation[a][i].turmas++; relation[a][i].alunos+=students;
+                    if(!iCourses[i]) iCourses[i]={}; if(!iCourses[i][c]) iCourses[i][c]={turmas:0,alunos:0}; iCourses[i][c].turmas++; iCourses[i][c].alunos+=students;
+                });
+                const recommendation=n=>n<=1?{label:'PRIORIDADE',color:'#059669',dot:'#10b981'}:n===2?{label:'ATENÇÃO / PREFERENCIAL',color:'#b45309',dot:'#f59e0b'}:n===3?{label:'EVITAR NOVAS',color:'#dc2626',dot:'#f43f5e'}:{label:'NÃO RECOMENDADO',color:'#991b1b',dot:'#e11d48'};
+                Object.keys(relation).forEach(a=>relation[a]=Object.values(relation[a]).map(x=>({...x,rec:recommendation(x.turmas)})).sort((x,y)=>x.turmas-y.turmas));
+                const summary=Object.values(aMap).map(x=>({...x,instrutores:x.inst.size})).sort((a,b)=>a.analista.localeCompare(b.analista));
+                const visibleAnalysts=[...new Set(rows.map(r=>getCanonical(r.analista)||'Não informado'))].sort();
+                const courseMatrix=Object.keys(matrix).sort().map(c=>({course:c,values:matrix[c],total:Object.values(matrix[c]).reduce((a,b)=>a+b,0)}));
+                const instructorCourses=Object.keys(iCourses).sort().map(i=>({instructor:i,courses:iCourses[i],turmas:Object.values(iCourses[i]).reduce((a,v)=>a+v.turmas,0),alunos:Object.values(iCourses[i]).reduce((a,v)=>a+v.alunos,0)}));
+                return {rows,analysts,courses,instructors,summary,visibleAnalysts,courseMatrix,relation,instructorCourses};
+            }, [data, statsPeriod, canonicalNameMap]);
+
+            const copyStatisticsBlock = (title, header, bodyRows) => {
+                const tableRows = bodyRows.map(row => `<tr>${row.map(cell => `<td style="border:1px solid #cbd5e1;padding:7px 10px;">${safeString(cell)}</td>`).join('')}</tr>`).join('');
+                const html = `<div style="font-family:Segoe UI,Arial;color:#1e293b"><div style="display:inline-block;background:#d9f99d;padding:5px 9px;font-weight:700;margin-bottom:8px">${title}</div><table style="border-collapse:collapse;width:100%;font-size:12px"><thead><tr>${header.map(h=>`<th style="border:1px solid #94a3b8;background:#f8fafc;padding:8px 10px;text-align:center">${h}</th>`).join('')}</tr></thead><tbody>${tableRows}</tbody></table><div style="font-size:10px;color:#64748b;margin-top:8px">Período: ${formatDatePTBR(statsPeriod.start)} a ${formatDatePTBR(statsPeriod.end)}</div></div>`;
+                const listener=e=>{e.preventDefault();e.clipboardData.setData('text/html',html);e.clipboardData.setData('text/plain',title+'\n'+bodyRows.map(r=>r.join(' | ')).join('\n'));};
+                document.addEventListener('copy',listener); try{document.execCommand('copy');showNotify(`${title} copiado com formatação.`);}finally{document.removeEventListener('copy',listener);}
+            };
 
             const filteredReportData = useMemo(() => {
                 if (reportType === 'logs') return logs;
@@ -2473,7 +2503,7 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                 openSimulator(simulator.scope, false, events);
             };
 
-            const calculateSimulatorScenario = (scopeToUse = 'all', isNewScenario = false, eventsOverride = null) => {
+            const openSimulator = (scopeToUse = 'all', isNewScenario = false, eventsOverride = null) => {
                 if (!data || data.length === 0) {
                     alert("Não há turmas na base de dados para simular.");
                     return;
@@ -2574,11 +2604,17 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                         if (isAtualPreenchido && role === papelAtualDaLinhaDoTempo) continue;
 
                         const currentValue = String(row[role] || '').trim();
-                        const isEmptyRole = currentValue === '' || currentValue.toLowerCase().includes('nao atribuido') || currentValue === 'undefined';
-                        if (!isEmptyRole) continue;
                         const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
+                        
                         const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], arrayReais, null, tempDb);
-                        if (options && options.length > 0) { row[role] = options[0].nome; rowChanged = true; }
+                        
+                        if (options && options.length > 0) {
+                            const bestOption = options[0].nome;
+                            if (currentValue === '' || currentValue.toLowerCase().includes('nao atribuido') || normalizeText(currentValue) !== normalizeText(bestOption)) {
+                                row[role] = bestOption;
+                                rowChanged = true;
+                            }
+                        }
                     }
 
                     if (!isAtualPreenchido) {
@@ -2610,50 +2646,15 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                         }
                     });
                 }
-                // MOTOR RÁPIDO: busca local limitada, sem varrer combinações exponenciais.
+                // Executa o mesmo motor cronológico que será usado na aplicação real.
                 const simulationPool = arrayReais;
-                const allDates = getChronologicalBalanceDates(tempDb);
-                const scoredDates = allDates.map(dateStr => ({ dateStr, ...getChronologicalDateScore(tempDb, dateStr, simulationPool) }))
-                    .filter(info => info.top && info.gap > BALANCE_LIMITS.maxGap)
-                    .sort((a,b) => b.gap - a.gap)
-                    .slice(0, 6);
-                const fastMoves = [];
-                for (const issue of scoredDates) {
-                    if (fastMoves.length >= 8) break;
-                    const donorNorm = normalizeText(issue.top.nome);
-                    const targets = [...issue.snapshot].filter(x => normalizeText(x.nome) !== donorNorm).sort((a,b) => a.totalAlunos - b.totalAlunos).slice(0, 4);
-                    const candidates = tempDb.map((row,index) => {
-                        const active = getActiveRoleOnBalanceDate(row, issue.dateStr);
-                        if (!active || normalizeText(active.inst) !== donorNorm) return null;
-                        const key = `${safeString(row.id) || index}|${active.role}`;
-                        if (!canMoveRoleForBalance(row, active.role, key, lockedEventKeys)) return null;
-                        return { row, index, role: active.role, alunos: parseInt(row.alunos) || 0, key };
-                    }).filter(Boolean).sort((a,b) => Math.abs(a.alunos - issue.gap/2) - Math.abs(b.alunos - issue.gap/2)).slice(0, 8);
-                    let best = null;
-                    for (const item of candidates) {
-                        for (const target of targets) {
-                            if (!canInstructorReceiveBalanceClass(item.row, item.role, target.nome)) continue;
-                            const courseKey = `${getSafeModalidade(item.row)}|${safeString(item.row.curso)}`;
-                            const targetCourseCount = (target.cursos || {})[courseKey] || 0;
-                            const minimumCourseCount = Math.min(...issue.snapshot.map(inst => (inst.cursos || {})[courseKey] || 0));
-                            if (targetCourseCount > minimumCourseCount + BALANCE_LIMITS.maxCourseGap) continue;
-                            const simulated = tempDb.map((row,idx) => idx === item.index ? {...row, [item.role]: target.nome} : row);
-                            if (getDuplicateInstructorInClass(simulated[item.index])) continue;
-                            const after = getChronologicalDateScore(simulated, issue.dateStr, simulationPool);
-                            if (!after.top || after.gap >= issue.gap) continue;
-                            const score = after.gap * 1000 + Math.abs((target.totalAlunos + item.alunos) - (issue.avg || BALANCE_LIMITS.ideal)) + targetCourseCount * 500;
-                            if (!best || score < best.score) best = {...item, to: target.nome, from: issue.top.nome, dateStr: issue.dateStr, afterGap: after.gap, score};
-                        }
-                    }
-                    if (best) {
-                        const current = tempDb[best.index];
-                        tempDb[best.index] = {...current, [best.role]: best.to, autoAssignedLogs: {...(normalizeAutoAssignedLogs(current.autoAssignedLogs) || {}), [best.role]: {nome: best.to, type: 'rebalance-future', effectiveDate: best.dateStr, reason: `Sugestão do simulador para ${formatDatePTBR(best.dateStr)}: de ${best.from} para ${best.to}, reduzindo a diferença projetada para ${best.afterGap} alunos.`}}};
-                        fastMoves.push(best);
-                    }
-                }
-                const remainingIssues = allDates.map(dateStr => ({dateStr, ...getChronologicalDateScore(tempDb, dateStr, simulationPool)})).filter(info => info.top && info.gap > BALANCE_LIMITS.maxGap);
-                const priorityDates = scoredDates.map(info => info.dateStr);
-                const chronologicalResult = { rows: tempDb, moves: fastMoves, remainingIssues };
+                const priorityDates = getCriticalChronologicalPriorityDates(tempDb, simulationPool, 12);
+                const chronologicalResult = executeChronologicalAutoBalance(tempDb, lockedEventKeys, simulationPool, {
+                    priorityDateList: priorityDates, maxPriorityDates: 10,
+                    maxChronologicalIterations: 60, maxRepairMoves: 80, maxRepairIssues: 16,
+                    priorityRepairMoves: 20, priorityRepairCycles: 3, priorityMaxDonors: 8,
+                    protectPriorityDate: false
+                });
                 tempDb = chronologicalResult.rows;
                 simulatedClasses = tempDb.filter(row => {
                     if (scopeToUse !== 'filtered') return true;
@@ -2671,31 +2672,13 @@ const executeChronologicalAutoBalance = (sourceRows, lockedMoveKeys = new Set(),
                 setSimulator({ isOpen: true, changes: simulatedClasses, newDb: tempDb, scope: scopeToUse,
                     variationId: (simulator.variationId || 0) + 1, totalModificadas: totalAlocacoesModificadas,
                     events: scenarioEvents, balanceMoves: chronologicalResult.moves,
-                    remainingIssues: chronologicalResult.remainingIssues, priorityDates,
-                    diagnosticsFound: scoredDates.length,
-                    coveragePercent: scoredDates.length > 0 ? Math.round(((scoredDates.length - Math.min(scoredDates.length, chronologicalResult.remainingIssues.length)) / scoredDates.length) * 100) : 100 });
-            };
-
-            const openSimulator = (scopeToUse = 'all', isNewScenario = false, eventsOverride = null) => {
-                if (simulatorRunningRef.current) { showNotify("A simulação já está em andamento.", "error"); return; }
-                if (!data || data.length === 0) { showNotify("Não há turmas para simular.", "error"); return; }
-                simulatorRunningRef.current = true;
-                setIsSimulatorCalculating(true);
-                setAiAlertModal(null);
-                window.setTimeout(() => {
-                    try { calculateSimulatorScenario(scopeToUse, isNewScenario, eventsOverride); }
-                    catch (error) { console.error("Falha controlada no simulador:", error); showNotify(`Falha ao simular: ${safeString(error && error.message) || 'erro inesperado'}.`, "error"); }
-                    finally { simulatorRunningRef.current = false; setIsSimulatorCalculating(false); }
-                }, 100);
+                    remainingIssues: chronologicalResult.remainingIssues, priorityDates });
             };
 
             const applySimulation = () => {
                 const eventSummary = (simulator.events || []).map(event => `${event.type}:${event.classId || event.instructor || 'geral'}${event.date ? `@${event.date}` : ''}`).join(' | ') || 'Nenhum evento manual';
                 const logs = addLog("Simulador IA", "Lote", "Inteligente", `Cenário aprovado pelo usuário. Escopo: ${simulator.scope === 'filtered' ? 'Mês Atual' : 'Geral'}. Eventos: ${eventSummary}`);
-                const blockedFromScenario = (simulator.events || []).filter(event => event.type === 'block').map(event => normalizeText(event.instructor)).filter(Boolean);
-                const nextBlocked = [...new Set([...blockedInstructors, ...blockedFromScenario])];
-                persist(simulator.newDb, substitutions, logs, nextBlocked);
-                setBlockedInstructors(nextBlocked);
+                persist(simulator.newDb, substitutions, logs);
                 setData(simulator.newDb);
                 setSimulator({ ...simulator, isOpen: false });
                 showNotify("✅ Distribuição do cenário aplicada com sucesso!", "success");
@@ -2882,13 +2865,64 @@ const redistributeBlockedInstructorRoles = (sourceRows, blockedList = blockedIns
 
 const handleBlockInstructor = (instructorName) => {
     const cleanName = getCanonical(instructorName);
-    if (!cleanName) { showNotify("Instrutor inválido para análise.", "error"); return; }
-    const affected = data.reduce((acc, row) => acc + getBlockRolesForClass(row).filter(role => normalizeText(row[role]) === normalizeText(cleanName)).length, 0);
-    const ok = window.confirm(`A IA identificará alternativas para ${affected} posição(ões) vinculada(s) a ${cleanName}. Deseja abrir o simulador? Nenhuma alteração será gravada agora.`);
+    const blockNorm = normalizeText(cleanName);
+
+    if (!blockNorm) {
+        showNotify("Instrutor inválido para bloqueio.", "error");
+        return;
+    }
+
+    if (blockedInstructors.includes(blockNorm)) {
+        showNotify(`${cleanName} já está bloqueado no sistema.`, "error");
+        return;
+    }
+
+    const affected = data.reduce((acc, row) => {
+        return acc + getBlockRolesForClass(row).filter(role => normalizeText(row[role]) === blockNorm).length;
+    }, 0);
+
+    const ok = window.confirm(
+        `Bloquear ${cleanName}?\n\n` +
+        `O instrutor sairá das listas do sistema e ${affected} posição(ões) de turma serão redistribuídas automaticamente respeitando carga, curso, técnica e futuros instrutores da mesma turma.`
+    );
+
     if (!ok) return;
+
+    const nextBlocked = [...new Set([...blockedInstructors, blockNorm])];
+    const redistribution = redistributeBlockedInstructorRoles(data, nextBlocked);
+    const newRows = redistribution.rows;
+    const changes = redistribution.changes;
+    const unresolved = redistribution.unresolved;
+
+    const nextWhitelist = tecnicaWhitelist.filter(nome => normalizeText(nome) !== blockNorm);
+    setTecnicaWhitelist(nextWhitelist);
+    localStorage.setItem('senacWhitelist_v1', JSON.stringify(nextWhitelist));
+
+    setBlockedInstructors(nextBlocked);
+    localStorage.setItem(BLOCK_KEY, JSON.stringify(nextBlocked));
+    const nextExtraInstructors = extraInstructors.filter(nome => normalizeText(nome) !== blockNorm);
+    setExtraInstructors(nextExtraInstructors);
+    localStorage.setItem(EXTRA_INSTRUCTORS_KEY, JSON.stringify(nextExtraInstructors));
+
+    const logEntry = {
+        id: Date.now(),
+        timestamp: new Date().toISOString(),
+        type: "Bloqueio de Instrutor",
+        classId: cleanName,
+        before: `${cleanName} ativo na base.`,
+        after: `Bloqueado. ${changes.length} posição(ões) redistribuída(s). ${redistribution.balanceMoves.length} ajuste(s) cronológico(s). ${unresolved.length} sem substituto. Meta: diferença máxima de ${BALANCE_LIMITS.maxGap} alunos por mês quando matematicamente possível.`
+    };
+
+    persist(newRows, substitutions, [logEntry, ...logs], nextBlocked);
     setSelectedInstructorDetail(null);
-    openSimulator('all', false, [...(simulator.events || []).filter(event => !(event.type === 'block' && normalizeText(event.instructor) === normalizeText(cleanName))), { type: 'block', instructor: cleanName, classId: '', role: 'instrutor1', date: '', alunos: '' }]);
+
+    if (unresolved.length > 0) {
+        showNotify(`Instrutor bloqueado, mas ${unresolved.length} posição(ões) ficaram sem substituto seguro.`, "error");
+    } else {
+        showNotify(`${cleanName} bloqueado: ${changes.length} posição(ões) redistribuída(s), meta mensal ${BALANCE_LIMITS.maxGap} alunos.`, "success");
+    }
 };
+
 useEffect(() => {
     // SOMENTE DETECÇÃO. Nenhuma redistribuição é executada em segundo plano.
     if (!user || !data || data.length === 0) return;
@@ -4276,7 +4310,97 @@ useEffect(() => {
             const totalInstrutoresAtivos = dashboardInstructors.length;
             const totalAlunosGeral = dashboardInstructors.reduce((acc, inst) => acc + inst.totalAlunos, 0);
             const mediaAlunosPorInstrutor = totalInstrutoresAtivos > 0 ? Math.round(totalAlunosGeral / totalInstrutoresAtivos) : 0;
-            // O preenchimento automático isolado foi removido. Toda sugestão passa pelo simulador.
+            // === IA: PREENCHEDOR DE VAGAS COM CRONOLOGIA PERFEITA ===
+            const autoFillEmptySlots = () => {
+                if (!window.confirm("A IA vai preencher as vagas identificando em qual fase da linha do tempo a turma está hoje. O Instrutor Atual será respeitado. Deseja continuar?")) return;
+
+                let newData = [...data];
+                let changedCount = 0;
+
+                const parseSecureDate = (str) => {
+                    if (!str) return null;
+                    const parts = String(str).split('/');
+                    if (parts.length === 3) return new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00`);
+                    return new Date(str + 'T00:00:00');
+                };
+
+                let listaReais = new Set();
+                newData.forEach(d => {
+                    if (d.instrutor1 && d.instrutor1.trim().length > 1) listaReais.add(d.instrutor1.trim());
+                    if (d.instrutor2 && d.instrutor2.trim().length > 1) listaReais.add(d.instrutor2.trim());
+                    if (d.instrutor3 && d.instrutor3.trim().length > 1) listaReais.add(d.instrutor3.trim());
+                    if (d.instrutorAtual && d.instrutorAtual.trim().length > 1 && !d.instrutorAtual.toLowerCase().includes('nao atribuido')) {
+                        listaReais.add(d.instrutorAtual.trim());
+                    }
+                });
+                const arrayReais = Array.from(listaReais);
+                const dataAlvoOtimizacao = parseSecureDate(viewDate) || new Date();
+
+                for (let i = 0; i < newData.length; i++) {
+                    let row = { ...newData[i] };
+                    let rowChanged = false;
+
+                    let roles = ['instrutor1', 'instrutor2'];
+                    if (row.modalidade === 'Técnica') roles = ['instrutor1', 'instrutor2', 'instrutor3'];
+
+                    const currentInstVal = String(row.instrutorAtual || '').trim();
+                    const isAtualVazio = currentInstVal === '' || currentInstVal.toLowerCase().includes('nao atribuido') || currentInstVal === 'undefined';
+
+                    // 1. DESCOBRE A FASE ATUAL
+                    const dTrans1 = parseSecureDate(row.dataTransferencia);
+                    const dTrans2 = parseSecureDate(row.dataTransferencia2);
+                    let papelAtualDaLinhaDoTempo = 'instrutor1';
+
+                    if (row.modalidade === 'Técnica') {
+                        if (dTrans1 && dataAlvoOtimizacao >= dTrans1) papelAtualDaLinhaDoTempo = 'instrutor2';
+                        if (dTrans2 && dataAlvoOtimizacao >= dTrans2) papelAtualDaLinhaDoTempo = 'instrutor3';
+                    } else {
+                        if (dTrans1 && dataAlvoOtimizacao >= dTrans1) papelAtualDaLinhaDoTempo = 'instrutor2';
+                    }
+
+                    // 2. O INSTRUTOR ATUAL DA PLANILHA ASSUME A CADEIRA DA FASE DE HOJE
+                    if (!isAtualVazio) {
+                        if (!row[papelAtualDaLinhaDoTempo] || String(row[papelAtualDaLinhaDoTempo]).trim() === '') {
+                            row[papelAtualDaLinhaDoTempo] = currentInstVal;
+                            rowChanged = true;
+                        }
+                    }
+
+                    // 3. IA PREENCHE AS CADEIRAS VAZIAS DO PASSADO OU FUTURO
+                    for (let role of roles) {
+                        const val = String(row[role] || '').trim().toLowerCase();
+                        if (val === '' || val.includes('nao atribuido') || val === 'undefined') {
+                            const alreadyInClass = roles.map(r => row[r]).filter(Boolean);
+                            const options = getBalancedInstructorOptions(row, role, alreadyInClass, [], arrayReais, null, newData);
+                            
+                            if (options && options.length > 0 && options[0].nome.trim().length > 1) {
+                                row[role] = options[0].nome;
+                                rowChanged = true;
+                                changedCount++;
+                            }
+                        }
+                    }
+
+                    // 4. ATUALIZA O "INSTRUTOR ATUAL" SE ELE ESTAVA VAZIO, USANDO O NOME DA FASE CORRETA
+                    if (isAtualVazio) {
+                        if (row[papelAtualDaLinhaDoTempo] && row.instrutorAtual !== row[papelAtualDaLinhaDoTempo]) {
+                            row.instrutorAtual = row[papelAtualDaLinhaDoTempo];
+                            rowChanged = true;
+                        }
+                    }
+
+                    if (rowChanged) newData[i] = row;
+                }
+
+                if (changedCount > 0 || newData !== data) {
+                    newData = JSON.parse(JSON.stringify(newData));
+                    persist(newData, substitutions, addLog("IA: Linha do Tempo", "SISTEMA", "Múltiplas", "Ajuste estrito de cadeia docente realizado via botão."));
+                    setData(newData);
+                    alert(`✅ Processamento concluído! O sistema identificou o momento atual das turmas e alocou os professores futuros e passados.`);
+                } else {
+                    alert("✅ Todos os dados já estão alinhados cronologicamente.");
+                }
+            };
                     // === O DESENHO DO SISTEMA COMEÇA AQUI ===
             return (
                 <div className="min-h-screen bg-slate-100 flex flex-col pb-10">
@@ -4289,11 +4413,13 @@ useEffect(() => {
                             <div className="flex items-center gap-6">
                                 <button onClick={handleFullBackupExport} className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-xs flex gap-1 items-center shadow-lg transition border border-indigo-500 animate-pulse hover:animate-none"><Icons.Sync /> Backup</button>
                                 {LOCAL_TEST_MODE && <span className="px-3 py-2 bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold text-xs uppercase tracking-wide">Modo Local</span>}
-                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos (v109)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
+                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos (v111)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
                                 
                                 {/* BOTÕES DE AÇÃO PRINCIPAIS */}
                                 <div className="flex gap-2">
- 
+                                    <button onClick={autoFillEmptySlots} className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105 border border-purple-400" title="Automação IA: preencher vagas somente após confirmação">
+                                        <Icons.UserPlus /> Preencher Vazios (IA)
+                                    </button> 
                                     
                                     <button onClick={() => openSimulator('all', false)} className="px-4 py-2 bg-purple-700 text-white rounded-lg hover:bg-purple-800 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105" title={`Abre o simulador sem aplicar mudanças`}>
                                         <Icons.Robot /> Simulador IA
@@ -4314,6 +4440,7 @@ useEffect(() => {
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('geral');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='geral'?'border-blue-600 text-blue-900 bg-white':'border-transparent text-gray-500 hover:text-blue-600 hover:bg-white'}`}>Relatório Geral</button>
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('subs');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='subs'?'border-blue-600 text-blue-900 bg-white':'border-transparent text-gray-500 hover:text-blue-600 hover:bg-white'}`}>Relatório Substituições</button>
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('estatisticas');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='estatisticas'?'border-emerald-600 text-emerald-900 bg-emerald-50':'border-transparent text-gray-500 hover:text-emerald-600 hover:bg-emerald-50'}`}>Estatísticas e Médias</button>
+                                <button onClick={() => {setActiveTab('relatorios'); setReportType('analisePeriodo');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='analisePeriodo'?'border-purple-600 text-purple-900 bg-purple-50':'border-transparent text-gray-500 hover:text-purple-600 hover:bg-purple-50'}`}>Análise por Período</button>
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('automacao');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='automacao'?'border-amber-600 text-amber-900 bg-amber-50':'border-transparent text-gray-500 hover:text-amber-600 hover:bg-amber-50'}`}>Automações IA</button>
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('logs');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='logs'?'border-purple-600 text-purple-900 bg-purple-50':'border-transparent text-gray-500 hover:text-purple-600 hover:bg-purple-50'}`}>Histórico</button>
                                 {/* Botão de Limpar Banco */}
@@ -4336,7 +4463,17 @@ useEffect(() => {
                         )}
                         {activeTab === 'relatorios' ? (
                             <div className="fade-in bg-white p-6 rounded-xl shadow-sm border border-gray-200 printable-content">
-                                {reportType === 'estatisticas' ? (
+                                {reportType === 'analisePeriodo' ? (
+                                    <div className="space-y-7">
+                                        <div className="rounded-2xl bg-gradient-to-r from-slate-900 via-purple-950 to-indigo-900 p-6 text-white shadow-xl"><h2 className="text-2xl font-black">Análise Estatística por Período</h2><p className="text-purple-200 text-sm mt-1">Turmas, alunos, cursos, analistas e instrutores em uma visão consolidada.</p></div>
+                                        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm no-print"><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3"><div><label className="input-label">Início</label><input type="date" className="input-field" value={statsPeriod.start} onChange={e=>setStatsPeriod({...statsPeriod,start:e.target.value})}/></div><div><label className="input-label">Fim</label><input type="date" className="input-field" value={statsPeriod.end} onChange={e=>setStatsPeriod({...statsPeriod,end:e.target.value})}/></div><div><label className="input-label">Analista</label><select className="input-field" value={statsPeriod.analyst} onChange={e=>setStatsPeriod({...statsPeriod,analyst:e.target.value})}><option value="">Todos</option>{statisticsAnalysis.analysts.map(x=><option key={x}>{x}</option>)}</select></div><div><label className="input-label">Curso</label><select className="input-field" value={statsPeriod.course} onChange={e=>setStatsPeriod({...statsPeriod,course:e.target.value})}><option value="">Todos</option>{statisticsAnalysis.courses.map(x=><option key={x}>{x}</option>)}</select></div><div><label className="input-label">Instrutor</label><select className="input-field" value={statsPeriod.instructor} onChange={e=>setStatsPeriod({...statsPeriod,instructor:e.target.value})}><option value="">Todos</option>{statisticsAnalysis.instructors.map(x=><option key={x}>{x}</option>)}</select></div></div><div className="flex flex-wrap gap-2 mt-4">{['Agendado','Ativo','Transferido','Finalizado'].map(st=><label key={st} className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 ${statsPeriod.statuses[st]?'bg-purple-100 border-purple-300 text-purple-900':'bg-slate-50 border-slate-200 text-slate-400'}`}><input type="checkbox" checked={statsPeriod.statuses[st]} onChange={()=>setStatsPeriod(p=>({...p,statuses:{...p.statuses,[st]:!p.statuses[st]}}))}/>{st}</label>)}</div></div>
+                                        {(!statsPeriod.start||!statsPeriod.end)?<div className="bg-white border-2 border-dashed border-slate-200 rounded-2xl p-12 text-center text-slate-400">Selecione o período para gerar as análises.</div>:<>
+                                        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div className="px-5 py-4 bg-lime-100 flex justify-between"><h3 className="font-black text-slate-900">Geral consolidado</h3><button onClick={()=>copyStatisticsBlock('Geral consolidado',['Analista','Turmas','Alunos','Instrutores atuais distintos'],[...statisticsAnalysis.summary.map(x=>[x.analista,x.turmas,x.alunos,x.instrutores]),['Total',statisticsAnalysis.rows.length,statisticsAnalysis.rows.reduce((a,r)=>a+(parseInt(r.alunos)||0),0),new Set(statisticsAnalysis.rows.map(r=>r.statInstructor)).size]])} className="bg-white text-purple-700 px-3 py-1 rounded-lg text-xs font-bold shadow"><Icons.Copy/> Copiar</button></div><table className="min-w-full comp-table"><thead><tr><th>Analista</th><th>Turmas</th><th>Alunos</th><th>Instrutores atuais distintos</th></tr></thead><tbody>{statisticsAnalysis.summary.map(x=><tr key={x.analista}><td className="font-black">{x.analista}</td><td>{x.turmas}</td><td>{x.alunos}</td><td className="font-bold">{x.instrutores}</td></tr>)}</tbody></table></section>
+                                        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div className="px-5 py-4 bg-lime-100 flex justify-between"><h3 className="font-black">Geral por Analista e Curso</h3><button onClick={()=>copyStatisticsBlock('Geral por Analista e Curso',['Curso',...statisticsAnalysis.visibleAnalysts,'Total'],statisticsAnalysis.courseMatrix.map(r=>[r.course,...statisticsAnalysis.visibleAnalysts.map(a=>r.values[a]||'–'),r.total]))} className="bg-white text-purple-700 px-3 py-1 rounded-lg text-xs font-bold shadow"><Icons.Copy/> Copiar</button></div><div className="overflow-x-auto"><table className="min-w-full comp-table"><thead><tr><th>Curso</th>{statisticsAnalysis.visibleAnalysts.map(a=><th key={a}>{a}</th>)}<th>Total</th></tr></thead><tbody>{statisticsAnalysis.courseMatrix.map(r=><tr key={r.course}><td>{r.course}</td>{statisticsAnalysis.visibleAnalysts.map(a=><td key={a} className="font-bold">{r.values[a]||'–'}</td>)}<td className="font-black">{r.total}</td></tr>)}</tbody></table></div></section>
+                                        <section><div className="bg-lime-100 px-5 py-4 rounded-t-2xl"><h3 className="font-black">Análise de Instrutor x Analista</h3></div><div className="grid grid-cols-1 xl:grid-cols-2 gap-5 mt-4">{Object.entries(statisticsAnalysis.relation).map(([a,items])=><div key={a} className="bg-white rounded-2xl border shadow-sm overflow-hidden"><div className="bg-purple-50 px-4 py-3 flex justify-between"><b className="text-purple-900">{a}</b><button onClick={()=>copyStatisticsBlock(`Instrutor x Analista - ${a}`,['Instrutor','Turmas','Alunos','Recomendação'],items.map(x=>[x.instrutor,x.turmas,x.alunos,x.rec.label]))} className="text-purple-700 text-xs font-bold"><Icons.Copy/> Copiar</button></div><table className="min-w-full comp-table"><thead><tr><th>Instrutor</th><th>Turmas</th><th>Alunos</th><th>Recomendação</th></tr></thead><tbody>{items.map(x=><tr key={x.instrutor}><td className="font-bold">{x.instrutor}</td><td>{x.turmas}</td><td>{x.alunos}</td><td className="font-black" style={{color:x.rec.color}}>● {x.rec.label}</td></tr>)}</tbody></table></div>)}</div></section>
+                                        <section><div className="bg-lime-100 px-5 py-4 rounded-t-2xl"><h3 className="font-black">Análise de Cursos por Instrutor</h3></div><div className="grid grid-cols-1 xl:grid-cols-2 gap-5 mt-4">{statisticsAnalysis.instructorCourses.map(x=><div key={x.instructor} className="bg-white rounded-2xl border shadow-sm overflow-hidden"><div className="bg-indigo-50 px-4 py-3 flex justify-between"><div><b className="text-indigo-900">{x.instructor}</b><div className="text-[10px] text-indigo-600">{x.turmas} turmas • {x.alunos} alunos</div></div><button onClick={()=>copyStatisticsBlock(`Cursos por Instrutor - ${x.instructor}`,['Curso','Turmas','Alunos'],Object.entries(x.courses).map(([c,v])=>[c,v.turmas,v.alunos]))} className="text-purple-700 text-xs font-bold"><Icons.Copy/> Copiar</button></div><table className="min-w-full comp-table"><thead><tr><th>Curso</th><th>Turmas</th><th>Alunos</th></tr></thead><tbody>{Object.entries(x.courses).map(([c,v])=><tr key={c}><td>{c}</td><td className="font-bold">{v.turmas}</td><td>{v.alunos}</td></tr>)}</tbody></table></div>)}</div></section>
+                                        </>}</div>
+                                ) : reportType === 'estatisticas' ? (
                                     <>
                                         <h2 className="text-xl font-bold text-emerald-900 mb-6 flex items-center gap-2 no-print border-b pb-4"> 
                                             <Icons.ChartBar /> Resumo Estatístico de Instrutores e Alunos (Data base: {formatDatePTBR(viewDate)})
@@ -4654,7 +4791,6 @@ useEffect(() => {
     )}
 </main>
 
-{isSimulatorCalculating && (<div className="modal-overlay z-[20000] no-print"><div className="bg-white rounded-2xl shadow-2xl border border-purple-200 p-8 max-w-md text-center"><div className="loading-icon text-purple-700 mx-auto w-fit"><Icons.Refresh /></div><h3 className="font-black text-purple-900 text-lg mt-4">Calculando simulação rápida</h3><p className="text-sm text-slate-600 mt-2">Avaliando datas críticas e melhores movimentos locais. Nenhuma alteração será aplicada automaticamente.</p></div></div>)}
 {/* MEGA PAINEL DO INSTRUTOR */}
 {selectedInstructorDetail && selectedInstructorDetail.organized && (
     <div className="modal-overlay printable-content z-[11000]">
@@ -5196,9 +5332,8 @@ useEffect(() => {
                                         <div className="grid grid-cols-2 gap-6 bg-blue-50/50 p-4 rounded-xl border border-blue-100">
                                             <div className="input-wrapper">
                                                 <label className="input-label text-blue-700">Instrutor 1</label>
-                                                <select className="input-field border-blue-200" value={safeString(editingClass.instrutor1)} onChange={e => setEditingClass({...editingClass, instrutor1: e.target.value})}>
+                                                <select className="input-field border-blue-200" value={editingClass.instrutor1} onChange={e => setEditingClass({...editingClass, instrutor1: e.target.value})}>
                                                     <option value="">Selecione...</option>
-                                                    {editingClass.instrutor1 && <option value={editingClass.instrutor1}>Atual: {safeString(editingClass.instrutor1)}</option>}
                                                     {editingClass.curso ? getRankedInstructorOptions(editingClass.curso, [editingClass.instrutor2, editingClass.instrutor3], 'instrutor1', editingClass.modalidade, [], null, editingClass.inicio).map(opt => (
                                                         <option key={opt.nome} value={opt.nome}>{opt.emoji} {safeString(opt.nome)} {safeString(opt.tip)}</option>
                                                     )) : uniqueInstrutores.map(i => <option key={i} value={i}>{safeString(i)}</option>)}
@@ -5210,9 +5345,8 @@ useEffect(() => {
                                             </div>
                                             <div className="input-wrapper">
                                                 <label className="input-label text-green-700">Instrutor 2</label>
-                                                <select className="input-field border-green-200" value={safeString(editingClass.instrutor2)} onChange={e => setEditingClass({...editingClass, instrutor2: e.target.value})}>
+                                                <select className="input-field border-green-200" value={editingClass.instrutor2} onChange={e => setEditingClass({...editingClass, instrutor2: e.target.value})}>
                                                     <option value="">Selecione...</option>
-                                                    {editingClass.instrutor2 && <option value={editingClass.instrutor2}>Atual: {safeString(editingClass.instrutor2)}</option>}
                                                     {editingClass.curso ? getRankedInstructorOptions(editingClass.curso, [editingClass.instrutor1, editingClass.instrutor3], 'instrutor2', editingClass.modalidade, [], null, editingClass.dataTransferencia).map(opt => (
                                                         <option key={opt.nome} value={opt.nome}>{opt.emoji} {safeString(opt.nome)} {safeString(opt.tip)}</option>
                                                     )) : uniqueInstrutores.map(i => <option key={i} value={i}>{safeString(i)}</option>)}
@@ -5228,9 +5362,8 @@ useEffect(() => {
                                                 </div>
                                                 <div className="input-wrapper">
                                                     <label className="input-label text-purple-700">Instrutor 3</label>
-                                                    <select className="input-field border-purple-200" value={safeString(editingClass.instrutor3)} onChange={e => setEditingClass({...editingClass, instrutor3: e.target.value})}>
+                                                    <select className="input-field border-purple-200" value={editingClass.instrutor3} onChange={e => setEditingClass({...editingClass, instrutor3: e.target.value})}>
                                                         <option value="">Selecione...</option>
-                                                    {editingClass.instrutor3 && <option value={editingClass.instrutor3}>Atual: {safeString(editingClass.instrutor3)}</option>}
                                                         {getRankedInstructorOptions(editingClass.curso, [editingClass.instrutor1, editingClass.instrutor2], 'instrutor3', editingClass.modalidade, [], null, editingClass.dataTransferencia2).map(opt => (
                                                             <option key={opt.nome} value={opt.nome}>{opt.emoji} {safeString(opt.nome)} {safeString(opt.tip)}</option>
                                                         ))}
@@ -5558,7 +5691,6 @@ useEffect(() => {
                                         <div>
                                             <h2 className="text-xl font-bold tracking-tight">Simulador de Distribuição e Equilíbrio</h2>
                                             <p className="text-slate-300 text-xs font-medium">Avaliação analítica de cenários da cadeia docente</p>
-                                            <p className="text-purple-200 text-[10px] font-bold mt-1">Diagnósticos prioritários: {simulator.diagnosticsFound || 0} • Movimentos sugeridos: {(simulator.balanceMoves || []).length} • Cobertura estimada: {simulator.coveragePercent ?? 100}%</p>
                                         </div>
                                     </div>
                                     
