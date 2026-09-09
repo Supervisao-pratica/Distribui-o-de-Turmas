@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>S.G.T - Gestão de Turmas (v111 Estatísticas Profissionais)</title>
+    <title>S.G.T - Gestão de Turmas (v112 Estatísticas Corrigidas)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -929,46 +929,159 @@ const handleClearAllData = () => {
             }, [data]);
 
             const statisticsAnalysis = useMemo(() => {
-                const classify = (row, start, end) => {
-                    const dStart = safeString(row.inicio).length === 10 ? new Date(row.inicio + 'T00:00:00') : null;
-                    const dEnd = safeString(row.termino).length === 10 ? new Date(row.termino + 'T23:59:59') : null;
-                    if (dStart && dStart > end) return 'Agendado';
-                    if (dEnd && dEnd < start) return 'Finalizado';
-                    const p1 = safeString(row.dataTransferencia).length === 10 ? new Date(row.dataTransferencia + 'T00:00:00') : null;
-                    const p2 = safeString(row.dataTransferencia2).length === 10 ? new Date(row.dataTransferencia2 + 'T00:00:00') : null;
-                    if ((p1 && p1 <= end) || (p2 && p2 <= end)) return 'Transferido';
+                const empty = { rows: [], analysts: [], courses: [], instructors: [], summary: [], visibleAnalysts: [], courseMatrix: [], relation: {}, instructorCourses: [], statusCounts: { Agendado: 0, Ativo: 0, Transferido: 0, Finalizado: 0 }, totals: { turmas: 0, alunos: 0, instructors: 0 }, validPeriod: false };
+                const parseDate = value => {
+                    const iso = fmtDate(value);
+                    if (!iso || iso.length !== 10) return null;
+                    const date = new Date(iso + 'T00:00:00');
+                    return isNaN(date.getTime()) ? null : date;
+                };
+                if (!statsPeriod.start || !statsPeriod.end || statsPeriod.end < statsPeriod.start) return empty;
+
+                const periodStart = new Date(statsPeriod.start + 'T00:00:00');
+                const periodEnd = new Date(statsPeriod.end + 'T23:59:59');
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const referenceDate = periodEnd < today ? new Date(periodEnd) : new Date(today);
+                referenceDate.setHours(0, 0, 0, 0);
+
+                const classifyAtReference = row => {
+                    const classStart = parseDate(row.inicio);
+                    const classEnd = parseDate(row.termino);
+                    const passage1 = parseDate(row.dataTransferencia);
+                    const passage2 = parseDate(row.dataTransferencia2);
+                    const rowStatus = normalizeText(row.status);
+
+                    // Turmas totalmente fora do período não entram no relatório.
+                    const beginsAfterPeriod = classStart && classStart > periodEnd;
+                    const endsBeforePeriod = classEnd && classEnd < periodStart;
+                    if (beginsAfterPeriod || endsBeforePeriod) return null;
+
+                    // O status é definido na data de referência do relatório, nunca fora do período.
+                    if (classStart && classStart > referenceDate) return 'Agendado';
+                    if (classEnd && classEnd < referenceDate) return 'Finalizado';
+                    const transferredByReference = (passage2 && passage2 <= referenceDate) || (passage1 && passage1 <= referenceDate);
+                    if (transferredByReference || rowStatus.includes('transfer')) return 'Transferido';
                     return 'Ativo';
                 };
-                if (!statsPeriod.start || !statsPeriod.end || statsPeriod.end < statsPeriod.start) return { rows: [], analysts: [], courses: [], instructors: [], summary: [], courseMatrix: [], relation: {}, instructorCourses: [] };
-                const start = new Date(statsPeriod.start + 'T00:00:00');
-                const end = new Date(statsPeriod.end + 'T23:59:59');
-                const enriched = data.map(row => {
-                    const active = getActiveInfoOnDate(row, end);
-                    return { ...row, statStatus: classify(row,start,end), statInstructor: active.inst || getCanonical(row.instrutorAtual) || getCanonical(row.instrutor1) || 'Não atribuído' };
+
+                const periodRows = data.map(row => {
+                    const statStatus = classifyAtReference(row);
+                    if (!statStatus) return null;
+                    const info = getActiveInfoOnDate(row, referenceDate);
+                    const statInstructor = info.inst || getCanonical(row.instrutorAtual) || getCanonical(row.instrutor1) || 'Não atribuído';
+                    return {
+                        ...row,
+                        statStatus,
+                        statInstructor,
+                        statAnalyst: getCanonical(row.analista) || 'Não informado',
+                        statCourse: safeString(row.curso).trim() || 'Não informado'
+                    };
+                }).filter(Boolean);
+
+                const statusRows = periodRows.filter(row => statsPeriod.statuses[row.statStatus]);
+                const applyExcept = excluded => statusRows.filter(row => {
+                    if (excluded !== 'analyst' && statsPeriod.analyst && row.statAnalyst !== statsPeriod.analyst) return false;
+                    if (excluded !== 'course' && statsPeriod.course && row.statCourse !== statsPeriod.course) return false;
+                    if (excluded !== 'instructor' && statsPeriod.instructor && row.statInstructor !== statsPeriod.instructor) return false;
+                    return true;
                 });
-                const analysts = [...new Set(enriched.map(r => getCanonical(r.analista) || 'Não informado'))].sort();
-                const courses = [...new Set(enriched.map(r => safeString(r.curso) || 'Não informado'))].sort();
-                const instructors = [...new Set(enriched.map(r => r.statInstructor))].sort();
-                const rows = enriched.filter(r => statsPeriod.statuses[r.statStatus])
-                    .filter(r => !statsPeriod.analyst || (getCanonical(r.analista)||'Não informado') === statsPeriod.analyst)
-                    .filter(r => !statsPeriod.course || (safeString(r.curso)||'Não informado') === statsPeriod.course)
-                    .filter(r => !statsPeriod.instructor || r.statInstructor === statsPeriod.instructor);
-                const aMap={}, matrix={}, relation={}, iCourses={};
-                rows.forEach(r => {
-                    const a=getCanonical(r.analista)||'Não informado', c=safeString(r.curso)||'Não informado', i=r.statInstructor, students=parseInt(r.alunos)||0;
-                    if(!aMap[a]) aMap[a]={analista:a,turmas:0,alunos:0,inst:new Set()}; aMap[a].turmas++; aMap[a].alunos+=students; if(i!=='Não atribuído') aMap[a].inst.add(i);
-                    if(!matrix[c]) matrix[c]={}; matrix[c][a]=(matrix[c][a]||0)+1;
-                    if(!relation[a]) relation[a]={}; if(!relation[a][i]) relation[a][i]={instrutor:i,turmas:0,alunos:0}; relation[a][i].turmas++; relation[a][i].alunos+=students;
-                    if(!iCourses[i]) iCourses[i]={}; if(!iCourses[i][c]) iCourses[i][c]={turmas:0,alunos:0}; iCourses[i][c].turmas++; iCourses[i][c].alunos+=students;
+
+                // Opções adaptativas: cada lista respeita o período, status e os outros filtros.
+                const analysts = [...new Set(applyExcept('analyst').map(row => row.statAnalyst))].sort((a,b) => a.localeCompare(b, 'pt-BR'));
+                const courses = [...new Set(applyExcept('course').map(row => row.statCourse))].sort((a,b) => a.localeCompare(b, 'pt-BR'));
+                const instructors = [...new Set(applyExcept('instructor').map(row => row.statInstructor))].sort((a,b) => a.localeCompare(b, 'pt-BR'));
+                const rows = applyExcept('none');
+
+                const analystMap = {};
+                const courseMap = {};
+                const relationMap = {};
+                const instructorCourseMap = {};
+
+                rows.forEach(row => {
+                    const analyst = row.statAnalyst;
+                    const course = row.statCourse;
+                    const instructor = row.statInstructor;
+                    const students = Number.parseInt(row.alunos, 10) || 0;
+                    if (!analystMap[analyst]) analystMap[analyst] = { analista: analyst, turmas: 0, alunos: 0, instructors: new Set() };
+                    analystMap[analyst].turmas += 1;
+                    analystMap[analyst].alunos += students;
+                    if (instructor !== 'Não atribuído') analystMap[analyst].instructors.add(instructor);
+
+                    if (!courseMap[course]) courseMap[course] = {};
+                    courseMap[course][analyst] = (courseMap[course][analyst] || 0) + 1;
+
+                    if (!relationMap[analyst]) relationMap[analyst] = {};
+                    if (!relationMap[analyst][instructor]) relationMap[analyst][instructor] = { instrutor: instructor, turmas: 0, alunos: 0 };
+                    relationMap[analyst][instructor].turmas += 1;
+                    relationMap[analyst][instructor].alunos += students;
+
+                    if (!instructorCourseMap[instructor]) instructorCourseMap[instructor] = {};
+                    if (!instructorCourseMap[instructor][course]) instructorCourseMap[instructor][course] = { turmas: 0, alunos: 0 };
+                    instructorCourseMap[instructor][course].turmas += 1;
+                    instructorCourseMap[instructor][course].alunos += students;
                 });
-                const recommendation=n=>n<=1?{label:'PRIORIDADE',color:'#059669',dot:'#10b981'}:n===2?{label:'ATENÇÃO / PREFERENCIAL',color:'#b45309',dot:'#f59e0b'}:n===3?{label:'EVITAR NOVAS',color:'#dc2626',dot:'#f43f5e'}:{label:'NÃO RECOMENDADO',color:'#991b1b',dot:'#e11d48'};
-                Object.keys(relation).forEach(a=>relation[a]=Object.values(relation[a]).map(x=>({...x,rec:recommendation(x.turmas)})).sort((x,y)=>x.turmas-y.turmas));
-                const summary=Object.values(aMap).map(x=>({...x,instrutores:x.inst.size})).sort((a,b)=>a.analista.localeCompare(b.analista));
-                const visibleAnalysts=[...new Set(rows.map(r=>getCanonical(r.analista)||'Não informado'))].sort();
-                const courseMatrix=Object.keys(matrix).sort().map(c=>({course:c,values:matrix[c],total:Object.values(matrix[c]).reduce((a,b)=>a+b,0)}));
-                const instructorCourses=Object.keys(iCourses).sort().map(i=>({instructor:i,courses:iCourses[i],turmas:Object.values(iCourses[i]).reduce((a,v)=>a+v.turmas,0),alunos:Object.values(iCourses[i]).reduce((a,v)=>a+v.alunos,0)}));
-                return {rows,analysts,courses,instructors,summary,visibleAnalysts,courseMatrix,relation,instructorCourses};
+
+                const recommendation = count => count <= 1
+                    ? { label: 'PRIORIDADE', color: '#059669' }
+                    : count === 2
+                        ? { label: 'ATENÇÃO / PREFERENCIAL', color: '#b45309' }
+                        : count === 3
+                            ? { label: 'EVITAR NOVAS', color: '#dc2626' }
+                            : { label: 'NÃO RECOMENDADO', color: '#991b1b' };
+
+                Object.keys(relationMap).forEach(analyst => {
+                    relationMap[analyst] = Object.values(relationMap[analyst])
+                        .map(item => ({ ...item, rec: recommendation(item.turmas) }))
+                        .sort((a,b) => a.turmas - b.turmas || a.instrutor.localeCompare(b.instrutor, 'pt-BR'));
+                });
+
+                const summary = Object.values(analystMap)
+                    .map(item => ({ analista: item.analista, turmas: item.turmas, alunos: item.alunos, instrutores: item.instructors.size }))
+                    .sort((a,b) => a.analista.localeCompare(b.analista, 'pt-BR'));
+                const visibleAnalysts = summary.map(item => item.analista);
+                const courseMatrix = Object.keys(courseMap).sort((a,b) => a.localeCompare(b, 'pt-BR')).map(course => ({
+                    course,
+                    values: courseMap[course],
+                    total: Object.values(courseMap[course]).reduce((sum, value) => sum + value, 0)
+                }));
+                const instructorCourses = Object.keys(instructorCourseMap).sort((a,b) => a.localeCompare(b, 'pt-BR')).map(instructor => ({
+                    instructor,
+                    courses: instructorCourseMap[instructor],
+                    turmas: Object.values(instructorCourseMap[instructor]).reduce((sum, item) => sum + item.turmas, 0),
+                    alunos: Object.values(instructorCourseMap[instructor]).reduce((sum, item) => sum + item.alunos, 0)
+                }));
+                const statusCountRows = periodRows.filter(row => {
+                    if (statsPeriod.analyst && row.statAnalyst !== statsPeriod.analyst) return false;
+                    if (statsPeriod.course && row.statCourse !== statsPeriod.course) return false;
+                    if (statsPeriod.instructor && row.statInstructor !== statsPeriod.instructor) return false;
+                    return true;
+                });
+                const statusCounts = statusCountRows.reduce((acc, row) => {
+                    acc[row.statStatus] += 1;
+                    return acc;
+                }, { Agendado: 0, Ativo: 0, Transferido: 0, Finalizado: 0 });
+                const totalStudents = rows.reduce((sum, row) => sum + (Number.parseInt(row.alunos, 10) || 0), 0);
+                const distinctInstructors = new Set(rows.map(row => row.statInstructor).filter(name => name && name !== 'Não atribuído')).size;
+
+                return {
+                    rows, analysts, courses, instructors, summary, visibleAnalysts, courseMatrix,
+                    relation: relationMap, instructorCourses, statusCounts,
+                    totals: { turmas: rows.length, alunos: totalStudents, instructors: distinctInstructors },
+                    validPeriod: true, referenceDate: getBalanceDateStr(referenceDate)
+                };
             }, [data, statsPeriod, canonicalNameMap]);
+
+            useEffect(() => {
+                if (!statisticsAnalysis.validPeriod) return;
+                setStatsPeriod(current => {
+                    const analyst = current.analyst && !statisticsAnalysis.analysts.includes(current.analyst) ? '' : current.analyst;
+                    const course = current.course && !statisticsAnalysis.courses.includes(current.course) ? '' : current.course;
+                    const instructor = current.instructor && !statisticsAnalysis.instructors.includes(current.instructor) ? '' : current.instructor;
+                    if (analyst === current.analyst && course === current.course && instructor === current.instructor) return current;
+                    return { ...current, analyst, course, instructor };
+                });
+            }, [statisticsAnalysis.validPeriod, statisticsAnalysis.analysts.join('|'), statisticsAnalysis.courses.join('|'), statisticsAnalysis.instructors.join('|')]);
 
             const copyStatisticsBlock = (title, header, bodyRows) => {
                 const tableRows = bodyRows.map(row => `<tr>${row.map(cell => `<td style="border:1px solid #cbd5e1;padding:7px 10px;">${safeString(cell)}</td>`).join('')}</tr>`).join('');
@@ -4413,7 +4526,7 @@ useEffect(() => {
                             <div className="flex items-center gap-6">
                                 <button onClick={handleFullBackupExport} className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-xs flex gap-1 items-center shadow-lg transition border border-indigo-500 animate-pulse hover:animate-none"><Icons.Sync /> Backup</button>
                                 {LOCAL_TEST_MODE && <span className="px-3 py-2 bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold text-xs uppercase tracking-wide">Modo Local</span>}
-                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos (v111)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
+                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos (v112)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
                                 
                                 {/* BOTÕES DE AÇÃO PRINCIPAIS */}
                                 <div className="flex gap-2">
@@ -4466,9 +4579,9 @@ useEffect(() => {
                                 {reportType === 'analisePeriodo' ? (
                                     <div className="space-y-7">
                                         <div className="rounded-2xl bg-gradient-to-r from-slate-900 via-purple-950 to-indigo-900 p-6 text-white shadow-xl"><h2 className="text-2xl font-black">Análise Estatística por Período</h2><p className="text-purple-200 text-sm mt-1">Turmas, alunos, cursos, analistas e instrutores em uma visão consolidada.</p></div>
-                                        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm no-print"><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3"><div><label className="input-label">Início</label><input type="date" className="input-field" value={statsPeriod.start} onChange={e=>setStatsPeriod({...statsPeriod,start:e.target.value})}/></div><div><label className="input-label">Fim</label><input type="date" className="input-field" value={statsPeriod.end} onChange={e=>setStatsPeriod({...statsPeriod,end:e.target.value})}/></div><div><label className="input-label">Analista</label><select className="input-field" value={statsPeriod.analyst} onChange={e=>setStatsPeriod({...statsPeriod,analyst:e.target.value})}><option value="">Todos</option>{statisticsAnalysis.analysts.map(x=><option key={x}>{x}</option>)}</select></div><div><label className="input-label">Curso</label><select className="input-field" value={statsPeriod.course} onChange={e=>setStatsPeriod({...statsPeriod,course:e.target.value})}><option value="">Todos</option>{statisticsAnalysis.courses.map(x=><option key={x}>{x}</option>)}</select></div><div><label className="input-label">Instrutor</label><select className="input-field" value={statsPeriod.instructor} onChange={e=>setStatsPeriod({...statsPeriod,instructor:e.target.value})}><option value="">Todos</option>{statisticsAnalysis.instructors.map(x=><option key={x}>{x}</option>)}</select></div></div><div className="flex flex-wrap gap-2 mt-4">{['Agendado','Ativo','Transferido','Finalizado'].map(st=><label key={st} className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 ${statsPeriod.statuses[st]?'bg-purple-100 border-purple-300 text-purple-900':'bg-slate-50 border-slate-200 text-slate-400'}`}><input type="checkbox" checked={statsPeriod.statuses[st]} onChange={()=>setStatsPeriod(p=>({...p,statuses:{...p.statuses,[st]:!p.statuses[st]}}))}/>{st}</label>)}</div></div>
+                                        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm no-print"><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3"><div><label className="input-label">Início</label><input type="date" className="input-field" value={statsPeriod.start} onChange={e=>setStatsPeriod({...statsPeriod,start:e.target.value})}/></div><div><label className="input-label">Fim</label><input type="date" className="input-field" value={statsPeriod.end} onChange={e=>setStatsPeriod({...statsPeriod,end:e.target.value})}/></div><div><label className="input-label">Analista</label><select className="input-field" value={statsPeriod.analyst} onChange={e=>setStatsPeriod({...statsPeriod,analyst:e.target.value})}><option value="">Todos</option>{statisticsAnalysis.analysts.map(x=><option key={x}>{x}</option>)}</select></div><div><label className="input-label">Curso</label><select className="input-field" value={statsPeriod.course} onChange={e=>setStatsPeriod({...statsPeriod,course:e.target.value})}><option value="">Todos</option>{statisticsAnalysis.courses.map(x=><option key={x}>{x}</option>)}</select></div><div><label className="input-label">Instrutor</label><select className="input-field" value={statsPeriod.instructor} onChange={e=>setStatsPeriod({...statsPeriod,instructor:e.target.value})}><option value="">Todos</option>{statisticsAnalysis.instructors.map(x=><option key={x}>{x}</option>)}</select></div></div><div className="flex flex-wrap gap-2 mt-4">{['Agendado','Ativo','Transferido','Finalizado'].map(st=><label key={st} className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 ${statsPeriod.statuses[st]?'bg-purple-100 border-purple-300 text-purple-900':'bg-slate-50 border-slate-200 text-slate-400'}`}><input type="checkbox" checked={statsPeriod.statuses[st]} onChange={()=>setStatsPeriod(p=>({...p,statuses:{...p.statuses,[st]:!p.statuses[st]}}))}/>{st}<span className="bg-white/80 border border-current/10 rounded-full px-1.5 py-0.5 text-[9px]">{statisticsAnalysis.statusCounts[st] || 0}</span></label>)}</div><div className="mt-3 flex flex-wrap items-center justify-between gap-2"><span className="text-[10px] text-slate-500">Critério: somente turmas que intersectam o período. Situação calculada na data de referência {statisticsAnalysis.referenceDate ? formatDatePTBR(statisticsAnalysis.referenceDate) : 'não definida'}.</span><button type="button" onClick={()=>setStatsPeriod(p=>({...p,analyst:'',course:'',instructor:'',statuses:{Agendado:true,Ativo:true,Transferido:true,Finalizado:true}}))} className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] font-bold">Limpar filtros</button></div></div>
                                         {(!statsPeriod.start||!statsPeriod.end)?<div className="bg-white border-2 border-dashed border-slate-200 rounded-2xl p-12 text-center text-slate-400">Selecione o período para gerar as análises.</div>:<>
-                                        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div className="px-5 py-4 bg-lime-100 flex justify-between"><h3 className="font-black text-slate-900">Geral consolidado</h3><button onClick={()=>copyStatisticsBlock('Geral consolidado',['Analista','Turmas','Alunos','Instrutores atuais distintos'],[...statisticsAnalysis.summary.map(x=>[x.analista,x.turmas,x.alunos,x.instrutores]),['Total',statisticsAnalysis.rows.length,statisticsAnalysis.rows.reduce((a,r)=>a+(parseInt(r.alunos)||0),0),new Set(statisticsAnalysis.rows.map(r=>r.statInstructor)).size]])} className="bg-white text-purple-700 px-3 py-1 rounded-lg text-xs font-bold shadow"><Icons.Copy/> Copiar</button></div><table className="min-w-full comp-table"><thead><tr><th>Analista</th><th>Turmas</th><th>Alunos</th><th>Instrutores atuais distintos</th></tr></thead><tbody>{statisticsAnalysis.summary.map(x=><tr key={x.analista}><td className="font-black">{x.analista}</td><td>{x.turmas}</td><td>{x.alunos}</td><td className="font-bold">{x.instrutores}</td></tr>)}</tbody></table></section>
+                                        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div className="px-5 py-4 bg-lime-100 flex justify-between"><h3 className="font-black text-slate-900">Geral consolidado</h3><button onClick={()=>copyStatisticsBlock('Geral consolidado',['Analista','Turmas','Alunos','Instrutores atuais distintos'],[...statisticsAnalysis.summary.map(x=>[x.analista,x.turmas,x.alunos,x.instrutores]),['Total',statisticsAnalysis.totals.turmas,statisticsAnalysis.totals.alunos,statisticsAnalysis.totals.instructors]])} className="bg-white text-purple-700 px-3 py-1 rounded-lg text-xs font-bold shadow"><Icons.Copy/> Copiar</button></div><table className="min-w-full comp-table"><thead><tr><th>Analista</th><th>Turmas</th><th>Alunos</th><th>Instrutores atuais distintos</th></tr></thead><tbody>{statisticsAnalysis.summary.map(x=><tr key={x.analista}><td className="font-black">{x.analista}</td><td>{x.turmas}</td><td>{x.alunos}</td><td className="font-bold">{x.instrutores}</td></tr>)}<tr className="bg-slate-100 font-black"><td>Total</td><td>{statisticsAnalysis.totals.turmas}</td><td>{statisticsAnalysis.totals.alunos}</td><td>{statisticsAnalysis.totals.instructors}</td></tr></tbody></table></section>
                                         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div className="px-5 py-4 bg-lime-100 flex justify-between"><h3 className="font-black">Geral por Analista e Curso</h3><button onClick={()=>copyStatisticsBlock('Geral por Analista e Curso',['Curso',...statisticsAnalysis.visibleAnalysts,'Total'],statisticsAnalysis.courseMatrix.map(r=>[r.course,...statisticsAnalysis.visibleAnalysts.map(a=>r.values[a]||'–'),r.total]))} className="bg-white text-purple-700 px-3 py-1 rounded-lg text-xs font-bold shadow"><Icons.Copy/> Copiar</button></div><div className="overflow-x-auto"><table className="min-w-full comp-table"><thead><tr><th>Curso</th>{statisticsAnalysis.visibleAnalysts.map(a=><th key={a}>{a}</th>)}<th>Total</th></tr></thead><tbody>{statisticsAnalysis.courseMatrix.map(r=><tr key={r.course}><td>{r.course}</td>{statisticsAnalysis.visibleAnalysts.map(a=><td key={a} className="font-bold">{r.values[a]||'–'}</td>)}<td className="font-black">{r.total}</td></tr>)}</tbody></table></div></section>
                                         <section><div className="bg-lime-100 px-5 py-4 rounded-t-2xl"><h3 className="font-black">Análise de Instrutor x Analista</h3></div><div className="grid grid-cols-1 xl:grid-cols-2 gap-5 mt-4">{Object.entries(statisticsAnalysis.relation).map(([a,items])=><div key={a} className="bg-white rounded-2xl border shadow-sm overflow-hidden"><div className="bg-purple-50 px-4 py-3 flex justify-between"><b className="text-purple-900">{a}</b><button onClick={()=>copyStatisticsBlock(`Instrutor x Analista - ${a}`,['Instrutor','Turmas','Alunos','Recomendação'],items.map(x=>[x.instrutor,x.turmas,x.alunos,x.rec.label]))} className="text-purple-700 text-xs font-bold"><Icons.Copy/> Copiar</button></div><table className="min-w-full comp-table"><thead><tr><th>Instrutor</th><th>Turmas</th><th>Alunos</th><th>Recomendação</th></tr></thead><tbody>{items.map(x=><tr key={x.instrutor}><td className="font-bold">{x.instrutor}</td><td>{x.turmas}</td><td>{x.alunos}</td><td className="font-black" style={{color:x.rec.color}}>● {x.rec.label}</td></tr>)}</tbody></table></div>)}</div></section>
                                         <section><div className="bg-lime-100 px-5 py-4 rounded-t-2xl"><h3 className="font-black">Análise de Cursos por Instrutor</h3></div><div className="grid grid-cols-1 xl:grid-cols-2 gap-5 mt-4">{statisticsAnalysis.instructorCourses.map(x=><div key={x.instructor} className="bg-white rounded-2xl border shadow-sm overflow-hidden"><div className="bg-indigo-50 px-4 py-3 flex justify-between"><div><b className="text-indigo-900">{x.instructor}</b><div className="text-[10px] text-indigo-600">{x.turmas} turmas • {x.alunos} alunos</div></div><button onClick={()=>copyStatisticsBlock(`Cursos por Instrutor - ${x.instructor}`,['Curso','Turmas','Alunos'],Object.entries(x.courses).map(([c,v])=>[c,v.turmas,v.alunos]))} className="text-purple-700 text-xs font-bold"><Icons.Copy/> Copiar</button></div><table className="min-w-full comp-table"><thead><tr><th>Curso</th><th>Turmas</th><th>Alunos</th></tr></thead><tbody>{Object.entries(x.courses).map(([c,v])=><tr key={c}><td>{c}</td><td className="font-bold">{v.turmas}</td><td>{v.alunos}</td></tr>)}</tbody></table></div>)}</div></section>
