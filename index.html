@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="manifest" href="./manifest.webmanifest">
 <meta name="theme-color" content="#4c1d95">
-<title>S.G.T - Gestão de Turmas (v119 Sincronização Dupla)</title>
+<link rel="apple-touch-icon" href="./icon-192.png">
+<title>S.G.T - Gestão de Turmas (v120 Instalação e Sync Confirmada)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -411,6 +412,8 @@
             const migrationRef = useRef(false);
             const [syncStatus, setSyncStatus] = useState('idle');
             const [isOnline, setIsOnline] = useState(navigator.onLine);
+            const [installPrompt, setInstallPrompt] = useState(null);
+            const [syncDetail, setSyncDetail] = useState('Inicializando');
 
             const [filters, setFilters] = useState({ instrutor: '', analista: '', modalidade: '', curso: '', turma: '', dataTransferencia: '' });
             const [isFormOpen, setIsFormOpen] = useState(false);
@@ -479,9 +482,11 @@
                 const localRows = readLocalRows().map(r => ({...r, cloudId: classCloudId(r), modalidade:getSafeModalidade(r)}));
                 setData(localRows);
                 try { setSubstitutions(JSON.parse(localStorage.getItem(SUB_KEY)||'[]')); setLogs(JSON.parse(localStorage.getItem(LOG_KEY)||'[]')); } catch(e) {}
-                const online=()=>setIsOnline(true), offline=()=>setIsOnline(false);
-                window.addEventListener('online',online); window.addEventListener('offline',offline);
-                return ()=>{window.removeEventListener('online',online);window.removeEventListener('offline',offline);};
+                const online=()=>{setIsOnline(true);setSyncDetail('Internet restabelecida; conferindo nuvem');window.dispatchEvent(new Event('sgt-online'));};
+                const offline=()=>{setIsOnline(false);setSyncStatus('pending');setSyncDetail('Sem internet; dados protegidos no computador');};
+                const captureInstall=(event)=>{event.preventDefault();setInstallPrompt(event);};
+                window.addEventListener('online',online); window.addEventListener('offline',offline); window.addEventListener('beforeinstallprompt',captureInstall);
+                return ()=>{window.removeEventListener('online',online);window.removeEventListener('offline',offline);window.removeEventListener('beforeinstallprompt',captureInstall);};
             }, [user]);
 
             useEffect(() => {
@@ -509,7 +514,11 @@
                     local.forEach(r=>{const id=classCloudId(r), c=merged.get(id); if(!c||rowTimestamp(r)>rowTimestamp(c)) merged.set(id,{...r,cloudId:id});});
                     const rows=[...merged.values()].map(r=>({...r,modalidade:getSafeModalidade(r)}));
                     setData(rows); localStorage.setItem(DB_KEY,JSON.stringify(rows));
-                    setSyncStatus(snap.metadata.hasPendingWrites?'pending':'saved'); setLastSaved(new Date());
+                    const pending=snap.metadata.hasPendingWrites;
+                    const cacheOnly=snap.metadata.fromCache;
+                    setSyncStatus(pending||cacheOnly?'pending':'saved');
+                    setSyncDetail(pending?'Alterações locais aguardando confirmação':cacheOnly?'Exibindo cache; aguardando resposta do servidor':'Servidor confirmou as turmas');
+                    setLastSaved(new Date());
                 },e=>{console.error(e);setSyncStatus('error');});
                 const unsubMeta=onSnapshot(doc(window.remoteDB,'sgt','metadados'),{includeMetadataChanges:true},snap=>{if(!active||!snap.exists())return;const m=snap.data();const ls=Array.isArray(m.logs)?m.logs:[];const ss=Array.isArray(m.substitutions)?m.substitutions:[];setLogs(ls);setSubstitutions(ss);localStorage.setItem(LOG_KEY,JSON.stringify(ls));localStorage.setItem(SUB_KEY,JSON.stringify(ss));if(Array.isArray(m.blockedInstructors)){setBlockedInstructors(m.blockedInstructors);localStorage.setItem(BLOCK_KEY,JSON.stringify(m.blockedInstructors));}if(Array.isArray(m.extraInstructors)){setExtraInstructors(m.extraInstructors);localStorage.setItem(EXTRA_INSTRUCTORS_KEY,JSON.stringify(m.extraInstructors));}});
                 return()=>{active=false;unsubRows();unsubMeta();};
@@ -538,6 +547,17 @@
                 saveQueueRef.current=saveQueueRef.current.then(job,job).catch(e=>{console.error('Sincronização:',e);setIsSaving(false);setSyncStatus('error');showNotify(`Salvo no computador; nuvem pendente (${e.code||e.message})`,'error');return false;});return saveQueueRef.current;
             };
 
+            const installApp = async () => {
+                if (window.matchMedia('(display-mode: standalone)').matches) return showNotify('O S.G.T já está instalado neste computador.','success');
+                if (installPrompt) {
+                    await installPrompt.prompt();
+                    const result=await installPrompt.userChoice;
+                    if(result.outcome==='accepted') showNotify('Instalação iniciada.','success');
+                    setInstallPrompt(null); return;
+                }
+                showNotify('A instalação ainda não foi liberada pelo navegador. Confirme HTTPS e use o menu do Edge/Chrome: Aplicativos > Instalar este site como aplicativo.','error');
+            };
+
             const restoreBackupPrompt = async () => {
                 let local=[]; try { local=JSON.parse(localStorage.getItem(LOCAL_BACKUPS_KEY)||'[]'); } catch(e) {}
                 let cloud=[];
@@ -557,14 +577,20 @@
             const forceSync = async () => {
                 if(!navigator.onLine)return showNotify('Sem internet. Os dados continuam protegidos no computador.','error');
                 if(!window.auth||!window.auth.currentUser)return showNotify('Entre novamente com e-mail e senha para sincronizar.','error');
-                setSyncStatus('syncing');setIsSaving(true);
+                setSyncStatus('syncing');setSyncDetail('Comparando computador e nuvem');setIsSaving(true);
                 try{
                     const {collection,getDocs}=window.dbMethods;const snap=await getDocs(collection(window.remoteDB,TURMAS_COLLECTION));const cloud=snap.docs.map(d=>({...d.data(),cloudId:d.id}));const merged=new Map(cloud.map(r=>[r.cloudId,r]));
                     readLocalRows().forEach(r=>{const id=classCloudId(r),c=merged.get(id);if(!c||rowTimestamp(r)>=rowTimestamp(c))merged.set(id,{...r,cloudId:id});});
                     const finalRows=[...merged.values()]; localStorage.setItem(DB_KEY,JSON.stringify(finalRows));setData(finalRows);
-                    const ok=await persist(finalRows,substitutions,logs,blockedInstructors);if(ok)showNotify('Sincronização concluída: computador e nuvem conferidos.','success');
+                    const ok=await persist(finalRows,substitutions,logs,blockedInstructors);if(ok){await window.dbMethods.waitForPendingWrites(window.remoteDB);const verify=await window.dbMethods.getDocs(window.dbMethods.collection(window.remoteDB,TURMAS_COLLECTION));setSyncStatus(verify.metadata.fromCache?'pending':'saved');setSyncDetail(verify.metadata.fromCache?'Nuvem não confirmou; mantendo pendente':'Nuvem confirmou a sincronização');showNotify(verify.metadata.fromCache?'Dados locais preservados, mas o servidor ainda não confirmou.':'Sincronização concluída: computador e nuvem conferidos.',verify.metadata.fromCache?'error':'success');}
                 }catch(e){setSyncStatus('error');setIsSaving(false);showNotify(`Não foi possível sincronizar (${e.code||e.message})`,'error');}
             };
+
+            useEffect(()=>{
+                const run=()=>{ if(user && navigator.onLine && !isSaving) forceSync(); };
+                window.addEventListener('sgt-online',run);
+                return()=>window.removeEventListener('sgt-online',run);
+            },[user,isSaving,data]);
 
             const addLog = (type, classId, before, after) => {
                 const newLog = { id: Date.now(), timestamp: new Date().toISOString(), type, classId, before: typeof before === 'object' ? JSON.stringify(before) : safeString(before), after: typeof after === 'object' ? JSON.stringify(after) : safeString(after) };
@@ -4444,9 +4470,10 @@ useEffect(() => {
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('analisePeriodo');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='analisePeriodo'?'border-purple-600 text-purple-900 bg-purple-50':'border-transparent text-gray-500 hover:text-purple-600 hover:bg-purple-50'}`}>Análise por Período</button>
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('automacao');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='automacao'?'border-amber-600 text-amber-900 bg-amber-50':'border-transparent text-gray-500 hover:text-amber-600 hover:bg-amber-50'}`}>Automações IA</button>
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('logs');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='logs'?'border-purple-600 text-purple-900 bg-purple-50':'border-transparent text-gray-500 hover:text-purple-600 hover:bg-purple-50'}`}>Histórico</button>
+                                <button onClick={installApp} className="px-3 py-1 text-purple-700 hover:bg-purple-50 border border-purple-200 rounded text-xs font-bold flex items-center gap-1 transition"><Icons.Download /> Instalar App</button>
                                 <button onClick={restoreBackupPrompt} disabled={isSaving} className="px-3 py-1 text-indigo-700 hover:bg-indigo-50 border border-indigo-200 rounded text-xs font-bold flex items-center gap-1 transition disabled:opacity-50"><Icons.Download /> Restaurar backup</button>
                                 <button onClick={forceSync} disabled={isSaving} className="px-3 py-1 text-blue-700 hover:bg-blue-50 border border-blue-200 rounded text-xs font-bold flex items-center gap-1 transition disabled:opacity-50" title="Confere computador e nuvem e envia o que estiver pendente"><Icons.Refresh />{isSaving ? ' Sincronizando...' : ' Tentar sincronizar'}</button>
-                                <span className={`px-2 py-1 rounded text-[10px] font-black ${syncStatus==='saved'?'bg-green-100 text-green-700':syncStatus==='error'?'bg-red-100 text-red-700':'bg-amber-100 text-amber-800'}`}>{syncStatus==='saved'?'COMPUTADOR + NUVEM':!isOnline?'OFFLINE • SALVO LOCAL':'SINCRONIZAÇÃO PENDENTE'}</span>
+                                <span title={syncDetail} className={`px-2 py-1 rounded text-[10px] font-black ${syncStatus==='saved'?'bg-green-100 text-green-700':syncStatus==='error'?'bg-red-100 text-red-700':'bg-amber-100 text-amber-800'}`}>{syncStatus==='saved'?'COMPUTADOR + NUVEM':!isOnline?'OFFLINE • SALVO LOCAL':'SINCRONIZAÇÃO PENDENTE'}</span>
                                 {/* Botão de Limpar Banco */}
                                 <button onClick={handleClearAllData} className="px-3 py-1 text-red-600 hover:bg-red-50 border border-red-200 rounded text-xs font-bold flex items-center gap-1 transition mr-2">
                                     <Icons.Trash /> Limpar Banco
@@ -5948,6 +5975,6 @@ useEffect(() => {
             </ErrorBoundary>
         );
     </script>
-<script>if('serviceWorker' in navigator && location.protocol!=='file:')navigator.serviceWorker.register('./sw.js').catch(console.warn);</script>
+<script>if('serviceWorker' in navigator && location.protocol!=='file:')navigator.serviceWorker.register('./sw.js').then(reg=>{reg.update();if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});}).catch(console.warn);</script>
 </body>
 </html>
