@@ -6,7 +6,7 @@
     <link rel="manifest" href="./manifest.webmanifest">
 <meta name="theme-color" content="#4c1d95">
 <link rel="apple-touch-icon" href="./icon-192.png">
-<title>S.G.T - Gestão de Turmas (v120 Instalação e Sync Confirmada)</title>
+<title>S.G.T - Gestão de Turmas (v121 Firestore Estável)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -135,9 +135,9 @@
             firestoreModule,
             authModule
           ] = await Promise.all([
-            import("https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js"),
-            import("https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js"),
-            import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js")
+            import("https://www.gstatic.com/firebasejs/10.6.0/firebase-app.js"),
+            import("https://www.gstatic.com/firebasejs/10.6.0/firebase-firestore.js"),
+            import("https://www.gstatic.com/firebasejs/10.6.0/firebase-auth.js")
           ]);
 
           const { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, onSnapshot, getDoc, waitForPendingWrites } = firestoreModule;
@@ -583,7 +583,11 @@
                     readLocalRows().forEach(r=>{const id=classCloudId(r),c=merged.get(id);if(!c||rowTimestamp(r)>=rowTimestamp(c))merged.set(id,{...r,cloudId:id});});
                     const finalRows=[...merged.values()]; localStorage.setItem(DB_KEY,JSON.stringify(finalRows));setData(finalRows);
                     const ok=await persist(finalRows,substitutions,logs,blockedInstructors);if(ok){await window.dbMethods.waitForPendingWrites(window.remoteDB);const verify=await window.dbMethods.getDocs(window.dbMethods.collection(window.remoteDB,TURMAS_COLLECTION));setSyncStatus(verify.metadata.fromCache?'pending':'saved');setSyncDetail(verify.metadata.fromCache?'Nuvem não confirmou; mantendo pendente':'Nuvem confirmou a sincronização');showNotify(verify.metadata.fromCache?'Dados locais preservados, mas o servidor ainda não confirmou.':'Sincronização concluída: computador e nuvem conferidos.',verify.metadata.fromCache?'error':'success');}
-                }catch(e){setSyncStatus('error');setIsSaving(false);showNotify(`Não foi possível sincronizar (${e.code||e.message})`,'error');}
+                }catch(e){setSyncStatus('error');setIsSaving(false);const rawError=String(e&&e.message||e&&e.code||e||'erro desconhecido');
+                    if(rawError.includes('INTERNAL ASSERTION FAILED')){
+                        setSyncDetail('Falha interna do cache do Firestore neste navegador');
+                        showNotify('O cache do Firestore neste computador entrou em estado inconsistente. Feche todas as abas do S.G.T., abra novamente e clique em Tentar sincronizar. Os dados locais foram preservados.','error');
+                    } else showNotify(`Não foi possível sincronizar (${e.code||e.message})`,'error');}
             };
 
             useEffect(()=>{
