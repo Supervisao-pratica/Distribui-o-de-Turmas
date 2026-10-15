@@ -1,1 +1,0 @@
-SGT v120. Publique TODOS os arquivos em HTTPS na mesma pasta. Esta versão restaura os ícones e os requisitos do PWA, inclui o botão Instalar App, atualização do Service Worker e confirmação de sincronização que diferencia cache local de resposta real do servidor.
