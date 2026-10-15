@@ -1,0 +1,9 @@
+SGT v117 - PWA OFFLINE
+
+1. Publique TODOS os arquivos desta pasta no mesmo diretório de uma hospedagem HTTPS.
+2. Abra index.html no Microsoft Edge ou Google Chrome.
+3. Faça um primeiro acesso online para carregar e armazenar os componentes.
+4. Clique em Instalar App.
+5. Depois disso, o sistema poderá abrir offline; mudanças ficam no cache persistente do Firestore/IndexedDB e são sincronizadas quando a internet voltar.
+
+IMPORTANTE: abrir index.html diretamente por file:// não permite Service Worker nem instalação PWA.
