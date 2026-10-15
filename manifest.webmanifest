@@ -1,0 +1,9 @@
+{
+  "name": "S.G.T - Gestão de Turmas",
+  "short_name": "S.G.T",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#4c1d95"
+}

@@ -1,0 +1,1 @@
+SGT v119. Publique todos os arquivos juntos em HTTPS. O sistema lê primeiro a base local e em seguida a nuvem, mescla por turma, salva nos dois destinos e oferece o botão Tentar sincronizar. O documento legado é migrado automaticamente para sgt_turmas.
