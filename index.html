@@ -3,7 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>S.G.T - Gestão de Turmas (v115 Turmas por Analista)</title>
+    <link rel="manifest" href="./manifest.webmanifest">
+    <meta name="theme-color" content="#4c1d95">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <link rel="apple-touch-icon" href="./icon-192.png">
+    <title>S.G.T - Gestão de Turmas (v117 PWA Offline e Restauração)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -137,7 +141,7 @@
             import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js")
           ]);
 
-          const { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, onSnapshot } = firestoreModule;
+          const { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, onSnapshot, query, orderBy, limit, getDoc, waitForPendingWrites } = firestoreModule;
           const { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } = authModule;
 
           const firebaseConfig = {
@@ -150,7 +154,9 @@
           };
 
           const app = initializeApp(firebaseConfig);
-          const db = getFirestore(app);
+          const db = initializeFirestore(app, {
+            localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+          });
           const auth = getAuth(app);
 
           window.remoteDB = db;
@@ -324,6 +330,47 @@
         const BLOCK_KEY = 'senacBlockedInstructors_v1';
         const EXTRA_INSTRUCTORS_KEY = 'senacExtraInstructors_v1';
         const LAST_REBALANCE_KEY = 'senacLastRebalanceAt_v1';
+        const LOCAL_BACKUP_DB = 'SGT_Durable_Backups_v1';
+        const LOCAL_BACKUP_STORE = 'snapshots';
+        const LOCAL_BACKUP_LIMIT = 50;
+        const openLocalBackupDB = () => new Promise((resolve, reject) => {
+            const request = indexedDB.open(LOCAL_BACKUP_DB, 1);
+            request.onupgradeneeded = () => {
+                const db = request.result;
+                if (!db.objectStoreNames.contains(LOCAL_BACKUP_STORE)) {
+                    db.createObjectStore(LOCAL_BACKUP_STORE, { keyPath: 'id' });
+                }
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error || new Error('Falha ao abrir backup local.'));
+        });
+        const saveDurableLocalBackup = async (snapshot) => {
+            const db = await openLocalBackupDB();
+            await new Promise((resolve, reject) => {
+                const tx = db.transaction(LOCAL_BACKUP_STORE, 'readwrite');
+                const store = tx.objectStore(LOCAL_BACKUP_STORE);
+                store.put(snapshot);
+                const allKeysReq = store.getAllKeys();
+                allKeysReq.onsuccess = () => {
+                    const keys = (allKeysReq.result || []).sort();
+                    keys.slice(0, Math.max(0, keys.length - LOCAL_BACKUP_LIMIT)).forEach(key => store.delete(key));
+                };
+                tx.oncomplete = resolve;
+                tx.onerror = () => reject(tx.error || new Error('Falha ao gravar backup local.'));
+            });
+            db.close();
+        };
+        const listDurableLocalBackups = async () => {
+            const db = await openLocalBackupDB();
+            const rows = await new Promise((resolve, reject) => {
+                const tx = db.transaction(LOCAL_BACKUP_STORE, 'readonly');
+                const req = tx.objectStore(LOCAL_BACKUP_STORE).getAll();
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => reject(req.error || new Error('Falha ao listar backups locais.'));
+            });
+            db.close();
+            return rows.sort((a, b) => safeString(b.lastUpdate || b.id).localeCompare(safeString(a.lastUpdate || a.id)));
+        };
         const LOCAL_TEST_MODE = window.SGT_LOCAL_TEST_MODE === true;
         
         // Blocklist
@@ -394,6 +441,8 @@
             const [statsPeriod, setStatsPeriod] = useState({ start: '', end: '', statuses: { Agendado: true, Ativo: true, Transferido: true, Finalizado: true }, analyst: '', course: '', instructor: '' });
             const fileInputRef = useRef(null);
             const blockedCleanupRunningRef = useRef(false);
+            const saveQueueRef = useRef(Promise.resolve());
+            const [cloudSaveStatus, setCloudSaveStatus] = useState('idle');
 
             const [filters, setFilters] = useState({ instrutor: '', analista: '', modalidade: '', curso: '', turma: '', dataTransferencia: '' });
             const [isFormOpen, setIsFormOpen] = useState(false);
@@ -453,8 +502,36 @@
             const [editingClass, setEditingClass] = useState(null);
 
             const [emailConfigModal, setEmailConfigModal] = useState(false);
+            const [backupRestoreModal, setBackupRestoreModal] = useState(false);
+            const [availableBackups, setAvailableBackups] = useState([]);
+            const [backupLoading, setBackupLoading] = useState(false);
+            const [isOnline, setIsOnline] = useState(navigator.onLine);
+            const [installPrompt, setInstallPrompt] = useState(null);
             const [emailPeriod, setEmailPeriod] = useState({ start: '', end: '' });
             const [aiAlertModal, setAiAlertModal] = useState(null);
+
+            useEffect(() => {
+                const updateConnectivity = () => setIsOnline(navigator.onLine);
+                const captureInstall = (event) => { event.preventDefault(); setInstallPrompt(event); };
+                window.addEventListener('online', updateConnectivity);
+                window.addEventListener('offline', updateConnectivity);
+                window.addEventListener('beforeinstallprompt', captureInstall);
+                if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+                    navigator.serviceWorker.register('./sw.js').catch(err => console.warn('Service Worker:', err));
+                }
+                return () => {
+                    window.removeEventListener('online', updateConnectivity);
+                    window.removeEventListener('offline', updateConnectivity);
+                    window.removeEventListener('beforeinstallprompt', captureInstall);
+                };
+            }, []);
+
+            const installApp = async () => {
+                if (!installPrompt) return showNotify('Use o menu do Edge/Chrome e escolha “Instalar este site como aplicativo”.', 'info');
+                await installPrompt.prompt();
+                await installPrompt.userChoice;
+                setInstallPrompt(null);
+            };
 
             // === MODO TESTE LOCAL: carrega somente dados do navegador ===
             useEffect(() => {
@@ -498,9 +575,16 @@
                         const dbData = docSnap.data();
                         const parsedData = (dbData.data || []).map(r => ({...r, modalidade: getSafeModalidade(r), autoAssignedLogs: normalizeAutoAssignedLogs(r.autoAssignedLogs)}));
                         
+                        const parsedLogs = dbData.logs || [];
+                        const parsedSubs = dbData.substitutions || [];
                         setData(parsedData);
-                        setLogs(dbData.logs || []);
-                        setSubstitutions(dbData.substitutions || []);
+                        setLogs(parsedLogs);
+                        setSubstitutions(parsedSubs);
+                        localStorage.setItem(DB_KEY, JSON.stringify(parsedData));
+                        localStorage.setItem(LOG_KEY, JSON.stringify(parsedLogs));
+                        localStorage.setItem(SUB_KEY, JSON.stringify(parsedSubs));
+                        setLastSaved(new Date());
+                        setCloudSaveStatus('saved');
                         if (Array.isArray(dbData.blockedInstructors)) {
                             const mergedBlocked = [...new Set([...BLOCKED_INSTRUCTORS, ...dbData.blockedInstructors].map(normalizeText).filter(Boolean))];
                             setBlockedInstructors(mergedBlocked);
@@ -520,59 +604,141 @@
                 return () => unsub();
             }, [user]);
 
-            // === 4. FUNÇÃO PERSIST DEFINITIVA ===
+            // === 4. PERSISTÊNCIA DEFINITIVA: COMPUTADOR + NUVEM + BACKUP POR ALTERAÇÃO ===
             const persist = async (newData, newSubs, newLogs, nextBlockedInstructors = null) => {
-                const blockedToSave = Array.isArray(nextBlockedInstructors) ? nextBlockedInstructors : blockedInstructors;
-                const dataToSave = (Array.isArray(newData) ? newData : []).map(row => {
-                    const logs = normalizeAutoAssignedLogs(row.autoAssignedLogs);
-                    const normalizedRow = { ...row, modalidade: getSafeModalidade(row) };
-                    if (logs && Object.keys(logs).length > 0) {
-                        normalizedRow.autoAssignedLogs = logs;
-                    } else {
-                        delete normalizedRow.autoAssignedLogs;
-                    }
-                    return normalizedRow;
-                });
-                setIsSaving(true);
-                
-                setData(dataToSave);
-                setSubstitutions(newSubs); 
-                if(newLogs) setLogs(newLogs);
-                
-                localStorage.setItem(DB_KEY, JSON.stringify(dataToSave));
-                localStorage.setItem(SUB_KEY, JSON.stringify(newSubs));
-                if(newLogs) localStorage.setItem(LOG_KEY, JSON.stringify(newLogs));
-                localStorage.setItem(BLOCK_KEY, JSON.stringify(blockedToSave));
-                
-                if (!LOCAL_TEST_MODE && window.remoteDB && window.dbMethods) {
+                const operation = async () => {
+                    const blockedToSave = Array.isArray(nextBlockedInstructors) ? nextBlockedInstructors : blockedInstructors;
+                    const dataToSave = (Array.isArray(newData) ? newData : []).map(row => {
+                        const rowLogs = normalizeAutoAssignedLogs(row.autoAssignedLogs);
+                        const normalizedRow = { ...row, modalidade: getSafeModalidade(row) };
+                        if (rowLogs && Object.keys(rowLogs).length > 0) normalizedRow.autoAssignedLogs = rowLogs;
+                        else delete normalizedRow.autoAssignedLogs;
+                        return normalizedRow;
+                    });
+                    const subsToSave = Array.isArray(newSubs) ? newSubs : [];
+                    const logsToSave = Array.isArray(newLogs) ? newLogs : logs;
+                    const savedAt = new Date().toISOString();
+                    const backupId = `${savedAt.replace(/[^0-9]/g, '')}_${Math.random().toString(36).slice(2, 10)}`;
+                    const payload = {
+                        data: dataToSave,
+                        logs: logsToSave,
+                        substitutions: subsToSave,
+                        blockedInstructors: blockedToSave,
+                        extraInstructors: Array.isArray(extraInstructors) ? extraInstructors : [],
+                        lastUpdate: savedAt,
+                        updatedBy: safeString(user && user.email),
+                        backupId
+                    };
+                    setIsSaving(true);
+                    setCloudSaveStatus('saving');
+                    setData(dataToSave);
+                    setSubstitutions(subsToSave);
+                    setLogs(logsToSave);
+                    // Espelho rápido no navegador.
+                    localStorage.setItem(DB_KEY, JSON.stringify(dataToSave));
+                    localStorage.setItem(SUB_KEY, JSON.stringify(subsToSave));
+                    localStorage.setItem(LOG_KEY, JSON.stringify(logsToSave));
+                    localStorage.setItem(BLOCK_KEY, JSON.stringify(blockedToSave));
+                    // Backup durável no computador via IndexedDB, com retenção das 50 últimas alterações.
                     try {
-                        if (!window.auth || !window.auth.currentUser) {
-                            throw new Error("Usuário não autenticado no Firebase Auth.");
-                        }
-                        const { doc, setDoc } = window.dbMethods;
-                        await setDoc(doc(window.remoteDB, "sgt", "dadosGerais"), {
-                            data: dataToSave,
-                            logs: newLogs || logs,
-                            substitutions: newSubs,
-                            blockedInstructors: blockedToSave,
-                            extraInstructors,
-                            lastUpdate: new Date().toISOString()
-                        });
-                        console.log("🔥 Salvo no Firebase com sucesso!");
-                    } catch (e) {
-                        console.error("Erro ao salvar na nuvem: ", e);
-                        showNotify(`Firebase: falha ao salvar (${e.code || e.message || 'erro'}).`, "error");
+                        await saveDurableLocalBackup({ id: backupId, ...payload });
+                    } catch (localBackupError) {
+                        console.error('Falha no backup durável local:', localBackupError);
+                        showNotify('A alteração foi mantida na tela, mas o backup local durável falhou.', 'error');
                     }
-                } else if (LOCAL_TEST_MODE) {
-                    console.log("Modo teste local ativo: salvo apenas no navegador.");
-                }
-                
-                setLastSaved(new Date());
-                setTimeout(() => setIsSaving(false), 500); 
-            };            
+                    if (LOCAL_TEST_MODE) {
+                        setLastSaved(new Date());
+                        setCloudSaveStatus('local-only');
+                        setIsSaving(false);
+                        return true;
+                    }
+                    if (!window.remoteDB || !window.dbMethods) throw new Error('Firebase Firestore ainda não está pronto.');
+                    if (!window.auth || !window.auth.currentUser) throw new Error('Usuário não autenticado no Firebase Auth.');
+                    const { doc, writeBatch } = window.dbMethods;
+                    const batch = writeBatch(window.remoteDB);
+                    batch.set(doc(window.remoteDB, 'sgt', 'dadosGerais'), payload);
+                    batch.set(doc(window.remoteDB, 'sgt_backups', backupId), {
+                        ...payload,
+                        backupType: 'automatic-change',
+                        createdAt: savedAt
+                    });
+                    await batch.commit();
+                    if (navigator.onLine && window.dbMethods.waitForPendingWrites) {
+                        await window.dbMethods.waitForPendingWrites(window.remoteDB);
+                    }
+                    console.log('Firebase: dados e backup gravados/encaminhados.', backupId);
+                    setLastSaved(new Date());
+                    setCloudSaveStatus(navigator.onLine ? 'saved' : 'pending');
+                    setIsSaving(false);
+                    return true;
+                };
+                saveQueueRef.current = saveQueueRef.current.then(operation, operation).catch(error => {
+                    console.error('Erro ao salvar na nuvem:', error);
+                    setCloudSaveStatus('error');
+                    setIsSaving(false);
+                    showNotify(`Firebase: alteração salva no computador, mas não na nuvem (${error.code || error.message || 'erro'}).`, 'error');
+                    return false;
+                });
+                return saveQueueRef.current;
+            };
 
-            
-          
+            const loadAvailableBackups = async () => {
+                setBackupLoading(true);
+                try {
+                    const localRows = await listDurableLocalBackups();
+                    const merged = new Map(localRows.map(item => [item.backupId || item.id, { ...item, source: 'Computador' }]));
+                    if (navigator.onLine && window.remoteDB && window.dbMethods) {
+                        try {
+                            const { collection, getDocs, query, orderBy, limit } = window.dbMethods;
+                            const q = query(collection(window.remoteDB, 'sgt_backups'), orderBy('createdAt', 'desc'), limit(50));
+                            const snap = await getDocs(q);
+                            snap.forEach(d => {
+                                const item = { id: d.id, ...d.data(), source: 'Nuvem' };
+                                const key = item.backupId || item.id;
+                                const prior = merged.get(key);
+                                merged.set(key, prior ? { ...item, source: 'Computador + Nuvem' } : item);
+                            });
+                        } catch (cloudError) {
+                            console.warn('Backups da nuvem indisponíveis:', cloudError);
+                            showNotify('Mostrando os backups do computador. A consulta da nuvem não respondeu.', 'info');
+                        }
+                    }
+                    setAvailableBackups(Array.from(merged.values()).sort((a,b) => safeString(b.lastUpdate || b.createdAt || b.id).localeCompare(safeString(a.lastUpdate || a.createdAt || a.id))));
+                    setBackupRestoreModal(true);
+                } finally { setBackupLoading(false); }
+            };
+
+            const restoreSelectedBackup = async (backup) => {
+                if (!backup || !Array.isArray(backup.data)) return showNotify('Este backup não contém dados válidos.', 'error');
+                const when = new Date(backup.lastUpdate || backup.createdAt || Date.now()).toLocaleString('pt-BR');
+                if (!confirm(`Restaurar o backup de ${when}? O estado atual será preservado automaticamente como um novo backup antes da restauração.`)) return;
+                setBackupLoading(true);
+                try {
+                    // Cria explicitamente um ponto de retorno do estado atual antes de restaurar.
+                    const safetyCopyOk = await persist(
+                        data,
+                        substitutions,
+                        [...logs, { id: Date.now(), date: new Date().toISOString(), action: `Backup de segurança antes da restauração de ${backup.backupId || backup.id}`, user: safeString(user && user.email) }],
+                        blockedInstructors
+                    );
+                    if (!safetyCopyOk) throw new Error('Não foi possível criar o ponto de retorno antes da restauração.');
+                    const ok = await persist(
+                        backup.data,
+                        Array.isArray(backup.substitutions) ? backup.substitutions : [],
+                        Array.isArray(backup.logs) ? [...backup.logs, { id: Date.now(), date: new Date().toISOString(), action: `Backup restaurado: ${backup.backupId || backup.id}`, user: safeString(user && user.email) }] : [],
+                        Array.isArray(backup.blockedInstructors) ? backup.blockedInstructors : []
+                    );
+                    if (ok) {
+                        setBlockedInstructors(Array.isArray(backup.blockedInstructors) ? backup.blockedInstructors : []);
+                        if (Array.isArray(backup.extraInstructors)) setExtraInstructors(backup.extraInstructors);
+                        setBackupRestoreModal(false);
+                        showNotify('Backup restaurado no computador e enviado para sincronização com a nuvem.', 'success');
+                    }
+                } catch (error) {
+                    showNotify(`Não foi possível restaurar: ${error.message || error}`, 'error');
+                } finally { setBackupLoading(false); }
+            };
+
             const addLog = (type, classId, before, after) => {
                 const newLog = { id: Date.now(), timestamp: new Date().toISOString(), type, classId, before: typeof before === 'object' ? JSON.stringify(before) : safeString(before), after: typeof after === 'object' ? JSON.stringify(after) : safeString(after) };
                 return [newLog, ...logs];
@@ -4413,6 +4579,28 @@ useEffect(() => {
             return (
                 <div className="min-h-screen bg-slate-100 flex flex-col pb-10">
                     <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
+                    {backupRestoreModal && (
+                        <div className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center p-4 no-print">
+                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden">
+                                <div className="p-5 border-b bg-gradient-to-r from-indigo-950 to-purple-900 text-white flex justify-between items-center">
+                                    <div><h2 className="text-xl font-black">Restaurar backup anterior</h2><p className="text-xs text-indigo-200">Até 50 versões recentes do computador e da nuvem.</p></div>
+                                    <button onClick={() => setBackupRestoreModal(false)} className="p-2 hover:bg-white/10 rounded-lg"><Icons.X /></button>
+                                </div>
+                                <div className="overflow-auto p-4 space-y-2">
+                                    {availableBackups.length === 0 ? <div className="p-10 text-center text-gray-500">Nenhum backup foi encontrado.</div> : availableBackups.map((backup, index) => (
+                                        <div key={backup.backupId || backup.id || index} className="border rounded-xl p-4 flex flex-col md:flex-row md:items-center gap-3 hover:bg-indigo-50">
+                                            <div className="flex-1 min-w-0">
+                                                <div className="font-black text-gray-800">{new Date(backup.lastUpdate || backup.createdAt || Date.now()).toLocaleString('pt-BR')}</div>
+                                                <div className="text-xs text-gray-500 truncate">{backup.updatedBy || 'Usuário não identificado'} • {backup.source} • {(backup.data || []).length} turmas</div>
+                                                <div className="text-[10px] text-gray-400 font-mono truncate">{backup.backupId || backup.id}</div>
+                                            </div>
+                                            <button onClick={() => restoreSelectedBackup(backup)} disabled={backupLoading} className="bg-indigo-700 hover:bg-indigo-800 text-white px-4 py-2 rounded-lg text-xs font-black disabled:opacity-50">Restaurar esta versão</button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
                     {notification && (<div className={`custom-alert fade-in ${notification.type === 'error' ? 'bg-red-600' : 'bg-emerald-600'} text-white`}>{notification.type === 'error' ? <Icons.Alert /> : <Icons.Check />}<span className="font-bold">{safeString(notification.msg)}</span></div>)}
 
                     <div className="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm header-bar no-print">
@@ -4421,7 +4609,7 @@ useEffect(() => {
                             <div className="flex items-center gap-6">
                                 <button onClick={handleFullBackupExport} className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-xs flex gap-1 items-center shadow-lg transition border border-indigo-500 animate-pulse hover:animate-none"><Icons.Sync /> Backup</button>
                                 {LOCAL_TEST_MODE && <span className="px-3 py-2 bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold text-xs uppercase tracking-wide">Modo Local</span>}
-                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos (v115)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
+                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando computador + nuvem...</span></div>) : (cloudSaveStatus === 'error' || cloudSaveStatus === 'pending') ? (<div className="flex items-center gap-1 text-red-600"><Icons.Alert /><span className="text-xs font-bold uppercase tracking-wide">{cloudSaveStatus === 'pending' ? 'Offline • aguardando nuvem' : 'Pendente na nuvem'}</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Computador + Nuvem + Backup</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync confirmada: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
                                 
                                 {/* BOTÕES DE AÇÃO PRINCIPAIS */}
                                 <div className="flex gap-2">
@@ -4451,6 +4639,15 @@ useEffect(() => {
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('analisePeriodo');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='analisePeriodo'?'border-purple-600 text-purple-900 bg-purple-50':'border-transparent text-gray-500 hover:text-purple-600 hover:bg-purple-50'}`}>Análise por Período</button>
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('automacao');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='automacao'?'border-amber-600 text-amber-900 bg-amber-50':'border-transparent text-gray-500 hover:text-amber-600 hover:bg-amber-50'}`}>Automações IA</button>
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('logs');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='logs'?'border-purple-600 text-purple-900 bg-purple-50':'border-transparent text-gray-500 hover:text-purple-600 hover:bg-purple-50'}`}>Histórico</button>
+                                <button onClick={loadAvailableBackups} disabled={backupLoading} className="px-3 py-1 text-indigo-700 hover:bg-indigo-50 border border-indigo-200 rounded text-xs font-bold flex items-center gap-1 transition disabled:opacity-50" title="Consultar e restaurar backups anteriores">
+                                    <Icons.Refresh /> {backupLoading ? 'Carregando...' : 'Restaurar backup'}
+                                </button>
+                                <button onClick={installApp} className="px-3 py-1 text-purple-700 hover:bg-purple-50 border border-purple-200 rounded text-xs font-bold flex items-center gap-1 transition" title="Instalar este sistema no computador">
+                                    <Icons.Download /> Instalar App
+                                </button>
+                                <span className={`px-2 py-1 rounded text-[10px] font-black ${isOnline ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-800'}`}>
+                                    {isOnline ? 'ONLINE' : 'OFFLINE • sincronização pendente'}
+                                </span>
                                 {/* Botão de Limpar Banco */}
                                 <button onClick={handleClearAllData} className="px-3 py-1 text-red-600 hover:bg-red-50 border border-red-200 rounded text-xs font-bold flex items-center gap-1 transition mr-2">
                                     <Icons.Trash /> Limpar Banco
@@ -5952,5 +6149,8 @@ useEffect(() => {
             </ErrorBoundary>
         );
     </script>
+<script>
+if (location.protocol === 'file:') console.info('Para instalar e operar como PWA, publique esta pasta por HTTPS.');
+</script>
 </body>
 </html>
