@@ -1,6 +1,5 @@
-SGT v121 - correção de estabilidade do Firestore.
+SGT v122 - correção definitiva do conflito de cache do Firestore.
 
-Publicar todos os arquivos juntos via HTTPS.
-Alterações principais: Firebase Web SDK 10.6.0, recomendado no acompanhamento oficial do erro INTERNAL ASSERTION FAILED; cache PWA v121; mensagem de recuperação sem apagar dados locais.
+O Firestore agora usa cache somente em memória. A persistência durável offline continua sendo feita pelo próprio S.G.T. no armazenamento local e nos backups. Isso evita o erro INTERNAL ASSERTION FAILED causado pelo IndexedDB/múltiplas abas do SDK.
 
-No computador afetado: fechar TODAS as abas e janelas do S.G.T., abrir novamente pelo endereço HTTPS, entrar com o usuário e clicar em Tentar sincronizar. Não limpar dados do site antes de confirmar a sincronização.
+Publique todos os arquivos juntos em HTTPS. No computador afetado, feche todas as abas do S.G.T., abra novamente e confirme v122. Não é necessário apagar os dados locais antes do primeiro teste.
