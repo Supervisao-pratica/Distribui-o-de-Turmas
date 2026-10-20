@@ -6,7 +6,7 @@
     <link rel="manifest" href="./manifest.webmanifest">
 <meta name="theme-color" content="#4c1d95">
 <link rel="apple-touch-icon" href="./icon-192.png">
-<title>S.G.T - Gestão de Turmas (v122 Firestore sem conflito de cache)</title>
+<title>S.G.T - Gestão de Turmas (v123 Base local prioritária sem duplicidades)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -135,9 +135,9 @@
             firestoreModule,
             authModule
           ] = await Promise.all([
-            import("https://www.gstatic.com/firebasejs/10.6.0/firebase-app.js"),
-            import("https://www.gstatic.com/firebasejs/10.6.0/firebase-firestore.js"),
-            import("https://www.gstatic.com/firebasejs/10.6.0/firebase-auth.js")
+            import("https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js"),
+            import("https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js"),
+            import("https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js")
           ]);
 
           const { initializeFirestore, memoryLocalCache, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, onSnapshot, getDoc, waitForPendingWrites } = firestoreModule;
@@ -153,7 +153,7 @@
           };
 
           const app = initializeApp(firebaseConfig);
-          const db = initializeFirestore(app, { localCache: memoryLocalCache() });
+          const db = initializeFirestore(app, { localCache: memoryLocalCache(), experimentalAutoDetectLongPolling: true });
           const auth = getAuth(app);
 
           window.remoteDB = db;
@@ -330,10 +330,37 @@
         const TURMAS_COLLECTION = 'sgt_turmas';
         const LOCAL_SYNC_KEY = 'sgtLocalSyncState_v119';
         const LOCAL_BACKUPS_KEY = 'sgtLocalBackups_v119';
-        const classCloudId = (row) => encodeURIComponent(safeString(row && (row.cloudId || row.id || row.turma || row.codigo)) || `auto_${Date.now()}_${Math.random().toString(36).slice(2)}`).slice(0,1400);
+        // Identificador canonico: remove espacos invisiveis do Excel e impede que o mesmo numero gere documentos diferentes.
+        const canonicalClassId = (value) => safeString(value)
+            .replace(/[\u00A0\u2007\u202F\u200B-\u200D\uFEFF]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        const classCloudId = (row) => encodeURIComponent(canonicalClassId(row && (row.id || row.turma || row.codigo || row.cloudId))).slice(0,1400);
         const rowTimestamp = (row) => Date.parse(row && (row._localUpdatedAt || row._cloudUpdatedAt || row.lastUpdate) || 0) || 0;
-        const cleanComparable = (row) => { const x={...(row||{})}; delete x._pendingWrites; delete x._cloudUpdatedAt; delete x._cloudUpdatedBy; return JSON.stringify(x, Object.keys(x).sort()); };
-        const readLocalRows = () => { try { const r=JSON.parse(localStorage.getItem(DB_KEY)||'[]'); return Array.isArray(r)?r:[]; } catch { return []; } };
+        const cleanComparable = (row) => { const x={...(row||{})}; delete x._pendingWrites; delete x._cloudUpdatedAt; delete x._cloudUpdatedBy; delete x.cloudId; return JSON.stringify(x, Object.keys(x).sort()); };
+        const dedupeClasses = (rows) => {
+            const unique = new Map();
+            (Array.isArray(rows) ? rows : []).forEach((raw, index) => {
+                if (!raw || typeof raw !== 'object') return;
+                const id = canonicalClassId(raw.id || raw.turma || raw.codigo || raw.cloudId);
+                if (!id) return;
+                const normalized = { ...raw, id, cloudId: encodeURIComponent(id).slice(0,1400) };
+                const previous = unique.get(id);
+                // Em repeticoes locais, conserva a ocorrencia mais recente; nunca soma nem concatena turmas.
+                if (!previous || rowTimestamp(normalized) >= rowTimestamp(previous.row) || index > previous.index) {
+                    unique.set(id, { row: normalized, index });
+                }
+            });
+            return [...unique.values()].map(item => item.row);
+        };
+        const readLocalRows = () => {
+            try {
+                const parsed = JSON.parse(localStorage.getItem(DB_KEY) || '[]');
+                return dedupeClasses(parsed);
+            } catch {
+                return [];
+            }
+        };
         const saveLocalSnapshot = (payload) => {
             try { const old=JSON.parse(localStorage.getItem(LOCAL_BACKUPS_KEY)||'[]'); localStorage.setItem(LOCAL_BACKUPS_KEY, JSON.stringify([{...payload, id: payload.backupId}, ...(Array.isArray(old)?old:[])].slice(0,50))); } catch(e) { console.error('Backup local:',e); }
         };
@@ -410,6 +437,7 @@
             const cloudRowsRef = useRef(new Map());
             const saveQueueRef = useRef(Promise.resolve());
             const migrationRef = useRef(false);
+            const syncInFlightRef = useRef(false);
             const [syncStatus, setSyncStatus] = useState('idle');
             const [isOnline, setIsOnline] = useState(navigator.onLine);
             const [installPrompt, setInstallPrompt] = useState(null);
@@ -479,7 +507,8 @@
             // === BASE HÍBRIDA: SEMPRE LÊ COMPUTADOR E NUVEM ===
             useEffect(() => {
                 if (!user) return;
-                const localRows = readLocalRows().map(r => ({...r, cloudId: classCloudId(r), modalidade:getSafeModalidade(r)}));
+                const localRows = dedupeClasses(readLocalRows()).map(r => ({...r, cloudId: classCloudId(r), modalidade:getSafeModalidade(r)}));
+                if (localRows.length) localStorage.setItem(DB_KEY, JSON.stringify(localRows));
                 setData(localRows);
                 try { setSubstitutions(JSON.parse(localStorage.getItem(SUB_KEY)||'[]')); setLogs(JSON.parse(localStorage.getItem(LOG_KEY)||'[]')); } catch(e) {}
                 const online=()=>{setIsOnline(true);setSyncDetail('Internet restabelecida; conferindo nuvem');setTimeout(()=>window.dispatchEvent(new Event('sgt-online')),1500);};
@@ -491,7 +520,7 @@
 
             useEffect(() => {
                 if (!user || LOCAL_TEST_MODE || !window.remoteDB || !window.dbMethods) return;
-                const { collection, doc, getDoc, getDocs, onSnapshot, writeBatch } = window.dbMethods;
+                const { collection, doc, getDoc, getDocs, onSnapshot, writeBatch, setDoc } = window.dbMethods;
                 let active=true;
                 const migrate = async()=>{
                     if(migrationRef.current) return; migrationRef.current=true;
@@ -505,14 +534,14 @@
                     } catch(e){console.error('Migração:',e);} finally {migrationRef.current=false;}
                 };
                 migrate();
-                const unsubRows=onSnapshot(collection(window.remoteDB,TURMAS_COLLECTION),{includeMetadataChanges:true},snap=>{
+                const unsubRows=onSnapshot(collection(window.remoteDB,TURMAS_COLLECTION),snap=>{
                     if(!active)return;
                     const cloud=snap.docs.map(d=>({...d.data(),cloudId:d.id,_pendingWrites:d.metadata.hasPendingWrites}));
                     cloudRowsRef.current=new Map(cloud.map(r=>[r.cloudId,r]));
-                    const local=readLocalRows(); const merged=new Map();
-                    cloud.forEach(r=>merged.set(r.cloudId,r));
-                    local.forEach(r=>{const id=classCloudId(r), c=merged.get(id); if(!c||rowTimestamp(r)>rowTimestamp(c)) merged.set(id,{...r,cloudId:id});});
-                    const rows=[...merged.values()].map(r=>({...r,modalidade:getSafeModalidade(r)}));
+                    const local=dedupeClasses(readLocalRows());
+                    // Regra da base: o computador e a fonte principal. A nuvem so e usada quando este computador esta sem base.
+                    const sourceRows = local.length > 0 ? local : cloud;
+                    const rows=dedupeClasses(sourceRows).map(r=>({...r,cloudId:classCloudId(r),modalidade:getSafeModalidade(r)}));
                     setData(rows); localStorage.setItem(DB_KEY,JSON.stringify(rows));
                     const pending=snap.metadata.hasPendingWrites;
                     const cacheOnly=snap.metadata.fromCache;
@@ -520,7 +549,7 @@
                     setSyncDetail(pending?'Alterações locais aguardando confirmação':cacheOnly?'Exibindo cache; aguardando resposta do servidor':'Servidor confirmou as turmas');
                     setLastSaved(new Date());
                 },e=>{console.error(e);setSyncStatus('error');});
-                const unsubMeta=onSnapshot(doc(window.remoteDB,'sgt','metadados'),{includeMetadataChanges:true},snap=>{if(!active||!snap.exists())return;const m=snap.data();const ls=Array.isArray(m.logs)?m.logs:[];const ss=Array.isArray(m.substitutions)?m.substitutions:[];setLogs(ls);setSubstitutions(ss);localStorage.setItem(LOG_KEY,JSON.stringify(ls));localStorage.setItem(SUB_KEY,JSON.stringify(ss));if(Array.isArray(m.blockedInstructors)){setBlockedInstructors(m.blockedInstructors);localStorage.setItem(BLOCK_KEY,JSON.stringify(m.blockedInstructors));}if(Array.isArray(m.extraInstructors)){setExtraInstructors(m.extraInstructors);localStorage.setItem(EXTRA_INSTRUCTORS_KEY,JSON.stringify(m.extraInstructors));}});
+                const unsubMeta=onSnapshot(doc(window.remoteDB,'sgt','metadados'),snap=>{if(!active||!snap.exists())return;const m=snap.data();const ls=Array.isArray(m.logs)?m.logs:[];const ss=Array.isArray(m.substitutions)?m.substitutions:[];setLogs(ls);setSubstitutions(ss);localStorage.setItem(LOG_KEY,JSON.stringify(ls));localStorage.setItem(SUB_KEY,JSON.stringify(ss));if(Array.isArray(m.blockedInstructors)){setBlockedInstructors(m.blockedInstructors);localStorage.setItem(BLOCK_KEY,JSON.stringify(m.blockedInstructors));}if(Array.isArray(m.extraInstructors)){setExtraInstructors(m.extraInstructors);localStorage.setItem(EXTRA_INSTRUCTORS_KEY,JSON.stringify(m.extraInstructors));}});
                 return()=>{active=false;unsubRows();unsubMeta();};
             }, [user]);
 
@@ -530,7 +559,7 @@
                     const now=new Date().toISOString(); const backupId=`${now.replace(/\D/g,'')}_${Math.random().toString(36).slice(2,9)}`;
                     const blocked=Array.isArray(nextBlockedInstructors)?nextBlockedInstructors:blockedInstructors;
                     const prior=new Map(readLocalRows().map(r=>[classCloudId(r),r]));
-                    const rows=(Array.isArray(newData)?newData:[]).map(r=>{const id=classCloudId(r), before=prior.get(id);const changed=!before||cleanComparable(before)!==cleanComparable(r);return {...r,cloudId:id,modalidade:getSafeModalidade(r),_localUpdatedAt:changed?now:(r._localUpdatedAt||r._cloudUpdatedAt||now)};});
+                    const rows=dedupeClasses(Array.isArray(newData)?newData:[]).map(r=>{const id=classCloudId(r), before=prior.get(id);const changed=!before||cleanComparable(before)!==cleanComparable(r);return {...r,id:canonicalClassId(r.id),cloudId:id,modalidade:getSafeModalidade(r),_localUpdatedAt:changed?now:(r._localUpdatedAt||r._cloudUpdatedAt||now)};});
                     const subs=Array.isArray(newSubs)?newSubs:[]; const nextLogs=Array.isArray(newLogs)?newLogs:logs;
                     const payload={data:rows,logs:nextLogs,substitutions:subs,blockedInstructors:blocked,extraInstructors,backupId,lastUpdate:now,updatedBy:safeString(user&&user.email)};
                     setIsSaving(true);setSyncStatus(navigator.onLine?'saving':'pending');setData(rows);setLogs(nextLogs);setSubstitutions(subs);
@@ -575,22 +604,33 @@
             };
 
             const forceSync = async () => {
+                if(syncInFlightRef.current) return showNotify('Ja existe uma sincronizacao em andamento. Aguarde.','error');
                 if(!navigator.onLine)return showNotify('Sem internet. Os dados continuam protegidos no computador.','error');
-                if(!window.remoteDB||!window.dbMethods)return showNotify('Firebase ainda está inicializando. Aguarde alguns segundos e tente novamente.','error');
+                if(!window.remoteDB||!window.dbMethods)return showNotify('Firebase ainda esta inicializando. Aguarde alguns segundos e tente novamente.','error');
                 if(!window.auth||!window.auth.currentUser)return showNotify('Entre novamente com e-mail e senha para sincronizar.','error');
-                setSyncStatus('syncing');setSyncDetail('Comparando computador e nuvem');setIsSaving(true);
+                syncInFlightRef.current=true;setSyncStatus('syncing');setSyncDetail('Enviando a base unica do computador para a nuvem');setIsSaving(true);
                 try{
-                    const {collection,getDocs}=window.dbMethods;const snap=await getDocs(collection(window.remoteDB,TURMAS_COLLECTION));const cloud=snap.docs.map(d=>({...d.data(),cloudId:d.id}));const merged=new Map(cloud.map(r=>[r.cloudId,r]));
-                    readLocalRows().forEach(r=>{const id=classCloudId(r),c=merged.get(id);if(!c||rowTimestamp(r)>=rowTimestamp(c))merged.set(id,{...r,cloudId:id});});
-                    const finalRows=[...merged.values()]; localStorage.setItem(DB_KEY,JSON.stringify(finalRows));setData(finalRows);
-                    const ok=await persist(finalRows,substitutions,logs,blockedInstructors);if(ok){await window.dbMethods.waitForPendingWrites(window.remoteDB);const verify=await window.dbMethods.getDocs(window.dbMethods.collection(window.remoteDB,TURMAS_COLLECTION));setSyncStatus(verify.metadata.fromCache?'pending':'saved');setSyncDetail(verify.metadata.fromCache?'Nuvem não confirmou; mantendo pendente':'Nuvem confirmou a sincronização');showNotify(verify.metadata.fromCache?'Dados locais preservados, mas o servidor ainda não confirmou.':'Sincronização concluída: computador e nuvem conferidos.',verify.metadata.fromCache?'error':'success');}
-                }catch(e){setSyncStatus('error');setIsSaving(false);const rawError=String(e&&e.message||e&&e.code||e||'erro desconhecido');
+                    const local=dedupeClasses(readLocalRows());
+                    let finalRows=local;
+                    if(finalRows.length===0){
+                        const snap=await window.dbMethods.getDocs(window.dbMethods.collection(window.remoteDB,TURMAS_COLLECTION));
+                        finalRows=dedupeClasses(snap.docs.map(d=>({...d.data(),cloudId:d.id})));
+                        localStorage.setItem(DB_KEY,JSON.stringify(finalRows));setData(finalRows);
+                    }
+                    const ok=await persist(finalRows,substitutions,logs,blockedInstructors);
+                    if(ok){
+                        setSyncStatus('saved');setSyncDetail('Base unica do computador confirmada na nuvem');
+                        showNotify(`Sincronizacao concluida sem mesclar dados: ${finalRows.length} turma(s) unica(s).`,'success');
+                    }
+                }catch(e){
+                    setSyncStatus('error');setIsSaving(false);
+                    const rawError=String(e&&e.message||e&&e.code||e||'erro desconhecido');
                     if(rawError.includes('INTERNAL ASSERTION FAILED')){
-                        setSyncDetail('Falha interna do Firestore; recarregamento seguro necessário');
-                        showNotify('O Firestore interrompeu a fila interna. Os dados continuam salvos pelo S.G.T. no computador. Feche todas as abas do S.G.T., abra novamente e clique em Tentar sincronizar.','error');
-                    } else showNotify(`Não foi possível sincronizar (${e.code||e.message})`,'error');}
+                        setSyncDetail('Fila interna do Firestore reiniciada com seguranca');
+                        showNotify('Os dados permanecem salvos no computador. Feche outras abas antigas do S.G.T., recarregue esta versao e tente novamente.','error');
+                    } else showNotify(`Nao foi possivel sincronizar (${e.code||e.message})`,'error');
+                }finally{syncInFlightRef.current=false;setIsSaving(false);}
             };
-
             useEffect(()=>{
                 const run=()=>{ if(user && navigator.onLine && !isSaving) forceSync(); };
                 window.addEventListener('sgt-online',run);
@@ -619,8 +659,10 @@
                 if (!editingClass) return;
               
                 // Confere se o novo número da turma já existe no sistema
-                if (String(editingClass.id) !== String(editingClass.originalId)) {
-                    const idExists = data.some(d => String(d.id) === String(editingClass.id));
+                editingClass.id = canonicalClassId(editingClass.id);
+                editingClass.originalId = canonicalClassId(editingClass.originalId);
+                if (editingClass.id !== editingClass.originalId) {
+                    const idExists = data.some(d => canonicalClassId(d.id) === editingClass.id);
                     if (idExists) {
                         showNotify("Erro: Já existe outra turma com este número no sistema!", "error");
                         return;
@@ -3006,6 +3048,7 @@ useEffect(() => {
             };
 
             const smartAssignClass = (item, pendingData = [], customInstPool = null, customAnalystPool = null) => {
+                return { resultItem: { ...item }, autoAssigned: {} };
                 let newItem = { ...item };
                 let autoAssigned = {}; 
                 
@@ -3449,7 +3492,7 @@ useEffect(() => {
                             if (wb.SheetNames.includes("Turmas_DB")) { 
                                 const ws = wb.Sheets["Turmas_DB"]; 
                                 const jsonData = XLSX.utils.sheet_to_json(ws); 
-                                newDB = jsonData.map(row => ({
+                                newDB = dedupeClasses(jsonData.map(row => ({
                                     id: safeString(row['Turma'] || row['id']),
                                     modalidade: safeString(row['APZ'] || row['modalidade'] || 'Aperfeiçoamento'),
                                     curso: safeString(row['Curso'] || row['curso'] || 'Administrativo'),
@@ -3464,8 +3507,8 @@ useEffect(() => {
                                     instrutor3: safeString(row['Instrutor 3'] || row['instrutor3']),
                                     instrutorAtual: safeString(row['Instrutor Atual'] || row['instrutorAtual']),
                                     status: safeString(row['Situação'] || row['status']),
-                                    autoAssignedLogs: normalizeAutoAssignedLogs(row['autoAssignedLogs'])
-                                }));
+                                    autoAssignedLogs: undefined
+                                })));
 
                                 const instructorSlotsFilled = newDB.reduce((acc, row) => {
                                     return acc + ['instrutor1', 'instrutor2', 'instrutor3'].filter(role => sanitizeName(row[role])).length;
@@ -3669,7 +3712,7 @@ useEffect(() => {
                                     };
 
                                     // 1. A PERGUNTA CRUCIAL PARA O USUÁRIO
-                                    const usarIA = window.confirm("Deseja realizar uma Nova Distribuição com a IA?\n\n[OK] = A IA vai preencher os instrutores em branco.\n[CANCELAR] = Manter a base offline intacta (mantém os vazios como vieram).");
+                                    const usarIA = false;
 
                                     let listaReais = new Set();
                                     mergedData.forEach(d => {
@@ -3759,8 +3802,12 @@ useEffect(() => {
             };
 
             const handleCreateClass = (e) => { 
-                e.preventDefault(); 
-                const { resultItem, autoAssigned } = smartAssignClass({ ...newClass, alunos: parseInt(newClass.alunos)||0 });
+                e.preventDefault();
+                const cleanId = canonicalClassId(newClass.id);
+                if (!cleanId) return showNotify('Informe o numero da turma.', 'error');
+                if (data.some(row => canonicalClassId(row.id) === cleanId)) return showNotify('Erro: ja existe uma turma com este numero. Nenhum dado foi alterado.', 'error');
+                const resultItem = { ...newClass, id: cleanId, alunos: parseInt(newClass.alunos)||0 };
+                const autoAssigned = {};
                 const duplicateInstructor = getDuplicateInstructorInClass(resultItem);
                 if (duplicateInstructor) {
                     showNotify("Erro: o mesmo instrutor não pode ser Instrutor 1, 2 ou 3 na mesma turma.", "error");
@@ -3768,13 +3815,8 @@ useEffect(() => {
                 }
                 const newLogs = addLog("Criação", resultItem.id, "Inexistente", `Criada: ${resultItem.curso} (${resultItem.alunos} alunos) [${resultItem.modalidade}]`);
                 
-                const existingIdx = data.findIndex(d => String(d.id) === String(resultItem.id));
-                let newData = [...data];
-                if (existingIdx >= 0) {
-                    newData[existingIdx] = resultItem;
-                } else {
-                    newData.push(resultItem);
-                }
+                const existingIdx = -1;
+                const newData = dedupeClasses([...data, resultItem]);
 
                 persist(newData, substitutions, newLogs); 
                 setIsFormOpen(false); 
@@ -4445,15 +4487,15 @@ useEffect(() => {
                             <div className="flex items-center gap-6">
                                 <button onClick={handleFullBackupExport} className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-xs flex gap-1 items-center shadow-lg transition border border-indigo-500 animate-pulse hover:animate-none"><Icons.Sync /> Backup</button>
                                 {LOCAL_TEST_MODE && <span className="px-3 py-2 bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold text-xs uppercase tracking-wide">Modo Local</span>}
-                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos (v115)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
+                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos (v123)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
                                 
                                 {/* BOTÕES DE AÇÃO PRINCIPAIS */}
                                 <div className="flex gap-2">
-                                    <button onClick={autoFillEmptySlots} className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105 border border-purple-400" title="Automação IA: preencher vagas somente após confirmação">
+                                    <button style={{display:'none'}} onClick={autoFillEmptySlots} className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105 border border-purple-400" title="Automação IA: preencher vagas somente após confirmação">
                                         <Icons.UserPlus /> Preencher Vazios (IA)
                                     </button> 
                                     
-                                    <button onClick={() => openSimulator('all', false)} className="px-4 py-2 bg-purple-700 text-white rounded-lg hover:bg-purple-800 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105" title={`Abre o simulador sem aplicar mudanças`}>
+                                    <button style={{display:'none'}} onClick={() => openSimulator('all', false)} className="px-4 py-2 bg-purple-700 text-white rounded-lg hover:bg-purple-800 font-bold text-sm flex gap-2 items-center shadow-sm transition hover:scale-105" title={`Abre o simulador sem aplicar mudanças`}>
                                         <Icons.Robot /> Simulador IA
                                     </button>
 
@@ -4473,7 +4515,7 @@ useEffect(() => {
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('subs');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='subs'?'border-blue-600 text-blue-900 bg-white':'border-transparent text-gray-500 hover:text-blue-600 hover:bg-white'}`}>Relatório Substituições</button>
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('estatisticas');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='estatisticas'?'border-emerald-600 text-emerald-900 bg-emerald-50':'border-transparent text-gray-500 hover:text-emerald-600 hover:bg-emerald-50'}`}>Estatísticas e Médias</button>
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('analisePeriodo');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='analisePeriodo'?'border-purple-600 text-purple-900 bg-purple-50':'border-transparent text-gray-500 hover:text-purple-600 hover:bg-purple-50'}`}>Análise por Período</button>
-                                <button onClick={() => {setActiveTab('relatorios'); setReportType('automacao');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='automacao'?'border-amber-600 text-amber-900 bg-amber-50':'border-transparent text-gray-500 hover:text-amber-600 hover:bg-amber-50'}`}>Automações IA</button>
+                                <button style={{display:'none'}} onClick={() => {setActiveTab('relatorios'); setReportType('automacao');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='automacao'?'border-amber-600 text-amber-900 bg-amber-50':'border-transparent text-gray-500 hover:text-amber-600 hover:bg-amber-50'}`}>Automações IA</button>
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('logs');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='logs'?'border-purple-600 text-purple-900 bg-purple-50':'border-transparent text-gray-500 hover:text-purple-600 hover:bg-purple-50'}`}>Histórico</button>
                                 <button onClick={installApp} className="px-3 py-1 text-purple-700 hover:bg-purple-50 border border-purple-200 rounded text-xs font-bold flex items-center gap-1 transition"><Icons.Download /> Instalar App</button>
                                 <button onClick={restoreBackupPrompt} disabled={isSaving} className="px-3 py-1 text-indigo-700 hover:bg-indigo-50 border border-indigo-200 rounded text-xs font-bold flex items-center gap-1 transition disabled:opacity-50"><Icons.Download /> Restaurar backup</button>
@@ -4492,7 +4534,7 @@ useEffect(() => {
                     </div>
 
                     <main className="max-w-7xl mx-auto w-full px-6 py-8 flex-1">
-                        {totalSystemicAIAlerts > 0 && (
+                        {false && totalSystemicAIAlerts > 0 && (
                             <button onClick={() => setAiAlertModal({ scope: 'system' })} className="fixed bottom-6 right-6 z-50 bg-purple-700 hover:bg-purple-800 text-white rounded-full shadow-2xl px-4 py-3 flex items-center gap-2 border-2 border-purple-300 no-print" title="Abrir central de alertas da IA">
                                 <Icons.Robot /><span className="font-black text-xs">IA</span><span className="bg-white text-purple-800 rounded-full min-w-6 h-6 px-1 flex items-center justify-center text-[10px] font-black">{totalSystemicAIAlerts}</span>
                             </button>
@@ -5108,7 +5150,7 @@ useEffect(() => {
                         </div>
                     )}
 
-                    {aiAlertModal && (
+                    {false && aiAlertModal && (
                         <div className="modal-overlay z-[16000] no-print p-4">
                             <div className="modal-window ai-center-window bg-white">
                                 <div className="modal-header ai-center-header bg-purple-50 border-purple-200">
@@ -5469,7 +5511,7 @@ useEffect(() => {
                                             <div className="input-wrapper">
                                                 <label className="input-label">Analista</label>
                                                 <select className="input-field" value={newClass.analista} onChange={e => setNewClass({...newClass, analista: e.target.value})}>
-                                                    <option value="">Deixar em branco para Inteligência Automática...</option>
+                                                    <option value="">Selecione ou deixe em branco</option>
                                                     {newClass.curso ? getRankedAnalystOptions(newClass.curso).map(opt => (
                                                         <option key={opt.nome} value={opt.nome}>{opt.emoji} {safeString(opt.nome)} {safeString(opt.tip)}</option>
                                                     )) : uniqueAnalistas.map(a => <option key={a} value={a}>{safeString(a)}</option>)}
@@ -5503,7 +5545,7 @@ useEffect(() => {
                                                 <div className="input-wrapper">
                                                     <label className="input-label text-blue-700">Instrutor 1 (Início)</label>
                                                     <select className="input-field border-blue-200" value={newClass.instrutor1} onChange={e => setNewClass({...newClass, instrutor1: e.target.value})}>
-                                                        <option value="">Deixar em branco p/ IA preencher...</option>
+                                                        <option value="">Selecione ou deixe em branco</option>
                                                         {newClass.curso ? getRankedInstructorOptions(newClass.curso, [newClass.instrutor2, newClass.instrutor3], 'instrutor1', newClass.modalidade, [], null, newClass.inicio).map(opt => (
                                                             <option key={opt.nome} value={opt.nome}>{opt.emoji} {safeString(opt.nome)} {safeString(opt.tip)}</option>
                                                         )) : <option disabled>Selecione um curso</option>}
@@ -5516,7 +5558,7 @@ useEffect(() => {
                                                 <div className="input-wrapper">
                                                     <label className="input-label text-green-700">Instrutor 2 (Recebe P1)</label>
                                                     <select className="input-field border-green-200" value={newClass.instrutor2} onChange={e => setNewClass({...newClass, instrutor2: e.target.value})}>
-                                                        <option value="">Deixar em branco p/ IA preencher...</option>
+                                                        <option value="">Selecione ou deixe em branco</option>
                                                         {newClass.curso ? getRankedInstructorOptions(newClass.curso, [newClass.instrutor1, newClass.instrutor3], 'instrutor2', newClass.modalidade, [], null, newClass.dataTransferencia).map(opt => (
                                                             <option key={opt.nome} value={opt.nome}>{opt.emoji} {safeString(opt.nome)} {safeString(opt.tip)}</option>
                                                         )) : <option disabled>Selecione um curso</option>}
@@ -5533,7 +5575,7 @@ useEffect(() => {
                                                     <div className="input-wrapper">
                                                         <label className="input-label text-purple-700">Instrutor 3 (Recebe P2)</label>
                                                         <select className="input-field border-purple-200" value={newClass.instrutor3} onChange={e => setNewClass({...newClass, instrutor3: e.target.value})}>
-                                                            <option value="">Deixar em branco p/ IA preencher...</option>
+                                                            <option value="">Selecione ou deixe em branco</option>
                                                             {getRankedInstructorOptions(newClass.curso, [newClass.instrutor1, newClass.instrutor2], 'instrutor3', newClass.modalidade, [], null, newClass.dataTransferencia2).map(opt => (
                                                                 <option key={opt.nome} value={opt.nome}>{opt.emoji} {safeString(opt.nome)} {safeString(opt.tip)}</option>
                                                             ))}
@@ -5714,7 +5756,7 @@ useEffect(() => {
                         </div>
                     )}
                  {/* TELA DO SIMULADOR DE CENÁRIOS IA AVANÇADO */}
-                    {simulator.isOpen && (
+                    {false && simulator.isOpen && (
                         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
                             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden border border-slate-200">
                                 
@@ -5735,7 +5777,7 @@ useEffect(() => {
                                         <button onClick={() => openSimulator('filtered', false)} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${simulator.scope === 'filtered' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:text-white'}`}>
                                             Mês Atual Filtrado
                                         </button>
-                                        <button onClick={() => openSimulator('all', false)} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${simulator.scope === 'all' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:text-white'}`}>
+                                        <button style={{display:'none'}} onClick={() => openSimulator('all', false)} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${simulator.scope === 'all' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:text-white'}`}>
                                             Todos os Meses (Geral)
                                         </button>
                                     </div>
@@ -5980,6 +6022,6 @@ useEffect(() => {
             </ErrorBoundary>
         );
     </script>
-<script>if('serviceWorker' in navigator && location.protocol!=='file:')navigator.serviceWorker.register('./sw.js?v=122').then(reg=>{reg.update();if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});}).catch(console.warn);</script>
+<script>if('serviceWorker' in navigator && location.protocol!=='file:')navigator.serviceWorker.register('./sw.js?v=123').then(reg=>{reg.update();if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});}).catch(console.warn);</script>
 </body>
 </html>
