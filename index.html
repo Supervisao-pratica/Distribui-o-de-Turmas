@@ -6,7 +6,7 @@
     <link rel="manifest" href="./manifest.webmanifest">
 <meta name="theme-color" content="#4c1d95">
 <link rel="apple-touch-icon" href="./icon-192.png">
-<title>S.G.T - Gestão de Turmas (v129 Backup antigo compativel)</title>
+<title>S.G.T - Gestão de Turmas (v133 Copia fiel para email)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -498,7 +498,7 @@
                 const localRows = readLocalRows().map(r => ({...r, cloudId: classCloudId(r), modalidade:getSafeModalidade(r)}));
                 setData(localRows);
                 try { setSubstitutions(JSON.parse(localStorage.getItem(SUB_KEY)||'[]')); setLogs(JSON.parse(localStorage.getItem(LOG_KEY)||'[]')); } catch(e) {}
-                const online=()=>{setIsOnline(true);setSyncDetail('Internet restabelecida. Use Salvar na nuvem quando desejar.');};
+                const online=()=>{setIsOnline(true);setSyncDetail('Internet restabelecida; conferindo nuvem');setTimeout(()=>window.dispatchEvent(new Event('sgt-online')),1500);};
                 const offline=()=>{setIsOnline(false);setSyncStatus('pending');setSyncDetail('Sem internet; dados protegidos no computador');};
                 const captureInstall=(event)=>{event.preventDefault();setInstallPrompt(event);};
                 window.addEventListener('online',online); window.addEventListener('offline',offline); window.addEventListener('beforeinstallprompt',captureInstall);
@@ -531,8 +531,8 @@
                     setData(rows); localStorage.setItem(DB_KEY,JSON.stringify(rows));
                     const pending=snap.metadata.hasPendingWrites;
                     const cacheOnly=snap.metadata.fromCache;
-                    if(!readLocalRows().length)setSyncStatus(pending||cacheOnly?'pending':'saved');
-                    if(!readLocalRows().length)setSyncDetail(cacheOnly?'Exibindo cache da nuvem':'Base inicial recebida da nuvem');
+                    setSyncStatus(pending||cacheOnly?'pending':'saved');
+                    setSyncDetail(pending?'Alterações locais aguardando confirmação':cacheOnly?'Exibindo cache; aguardando resposta do servidor':'Servidor confirmou as turmas');
                     setLastSaved(new Date());
                 },e=>{console.error(e);setSyncStatus('error');});
                 const unsubMeta=onSnapshot(doc(window.remoteDB,'sgt','metadados'),snap=>{if(!active||!snap.exists())return;const m=snap.data();const ls=Array.isArray(m.logs)?m.logs:[];const ss=Array.isArray(m.substitutions)?m.substitutions:[];setLogs(ls);setSubstitutions(ss);localStorage.setItem(LOG_KEY,JSON.stringify(ls));localStorage.setItem(SUB_KEY,JSON.stringify(ss));if(Array.isArray(m.blockedInstructors)){setBlockedInstructors(m.blockedInstructors);localStorage.setItem(BLOCK_KEY,JSON.stringify(m.blockedInstructors));}if(Array.isArray(m.extraInstructors)){setExtraInstructors(m.extraInstructors);localStorage.setItem(EXTRA_INSTRUCTORS_KEY,JSON.stringify(m.extraInstructors));}});
@@ -540,49 +540,10 @@
             }, [user]);
 
             // === SALVA SEMPRE NO COMPUTADOR E NA NUVEM, POR TURMA ===
-            // Toda alteração é gravada primeiro e apenas no computador.
             const persist = async (newData,newSubs,newLogs,nextBlockedInstructors=null) => {
-                const job = async () => {
-                    const now=new Date().toISOString();
-                    const backupId=`${now.replace(/\D/g,'')}_${Math.random().toString(36).slice(2,9)}`;
-                    const blocked=Array.isArray(nextBlockedInstructors)?nextBlockedInstructors:blockedInstructors;
-                    const prior=new Map(readLocalRows().map(r=>[classCloudId(r),r]));
-                    const rows=dedupeClasses(Array.isArray(newData)?newData:[]).map(r=>{const id=classCloudId(r),before=prior.get(id);const changed=!before||cleanComparable(before)!==cleanComparable(r);return {...r,cloudId:id,modalidade:getSafeModalidade(r),_localUpdatedAt:changed?now:(r._localUpdatedAt||r._cloudUpdatedAt||now)};});
-                    const subs=Array.isArray(newSubs)?newSubs:[];
-                    const nextLogs=Array.isArray(newLogs)?newLogs:logs;
-                    const payload={data:rows,logs:nextLogs,substitutions:subs,blockedInstructors:blocked,extraInstructors,backupId,lastUpdate:now,updatedBy:safeString(user&&user.email)};
-                    setIsSaving(true); setData(rows); setLogs(nextLogs); setSubstitutions(subs);
-                    localStorage.setItem(DB_KEY,JSON.stringify(rows)); localStorage.setItem(LOG_KEY,JSON.stringify(nextLogs)); localStorage.setItem(SUB_KEY,JSON.stringify(subs)); localStorage.setItem(BLOCK_KEY,JSON.stringify(blocked));
-                    saveLocalSnapshot(payload); setLastSaved(new Date()); setSyncStatus('pending'); setSyncDetail('Alterações salvas no computador. Clique em Salvar na nuvem quando desejar.'); setIsSaving(false);
-                    return true;
-                };
-                saveQueueRef.current=saveQueueRef.current.then(job,job);
-                return saveQueueRef.current;
+                const job=async()=>{const now=new Date().toISOString(),blocked=Array.isArray(nextBlockedInstructors)?nextBlockedInstructors:blockedInstructors;const rows=dedupeClasses(Array.isArray(newData)?newData:[]).map(r=>({...r,id:canonicalClassId(r.id),cloudId:classCloudId(r),modalidade:getSafeModalidade(r),_localUpdatedAt:now}));const subs=Array.isArray(newSubs)?newSubs:[],nextLogs=Array.isArray(newLogs)?newLogs:logs,payload={data:rows,logs:nextLogs,substitutions:subs,blockedInstructors:blocked,extraInstructors,backupId:`${Date.now()}`,lastUpdate:now,updatedBy:safeString(user&&user.email)};setIsSaving(true);setData(rows);setLogs(nextLogs);setSubstitutions(subs);localStorage.setItem(DB_KEY,JSON.stringify(rows));localStorage.setItem(LOG_KEY,JSON.stringify(nextLogs));localStorage.setItem(SUB_KEY,JSON.stringify(subs));localStorage.setItem(BLOCK_KEY,JSON.stringify(blocked));saveLocalSnapshot(payload);setLastSaved(new Date());setSyncStatus('pending');setSyncDetail('Salvo no computador. Use Salvar na nuvem quando desejar.');setIsSaving(false);return true;};saveQueueRef.current=saveQueueRef.current.then(job,job);return saveQueueRef.current;
             };
-
-            const saveToCloud = async () => {
-                if (isSaving) return;
-                if (!navigator.onLine) return showNotify('Sem internet. Os dados continuam salvos no computador.','error');
-                if (LOCAL_TEST_MODE || !window.remoteDB || !window.dbMethods || !window.auth || !window.auth.currentUser) return showNotify('Firebase ou autenticação indisponível.','error');
-                setIsSaving(true); setSyncStatus('saving'); setSyncDetail('Enviando a base do computador para a nuvem...');
-                try {
-                    const now=new Date().toISOString();
-                    const rows=dedupeClasses(readLocalRows()).map(r=>({...r,cloudId:classCloudId(r),_cloudUpdatedAt:now,_cloudUpdatedBy:safeString(user&&user.email)}));
-                    const {doc,writeBatch,setDoc,collection,getDocs}=window.dbMethods;
-                    const snap=await getDocs(collection(window.remoteDB,TURMAS_COLLECTION));
-                    const cloudIds=new Set(snap.docs.map(d=>d.id));
-                    const localIds=new Set(rows.map(r=>r.cloudId));
-                    const actions=[];
-                    rows.forEach(row=>actions.push({type:'set',id:row.cloudId,row}));
-                    cloudIds.forEach(id=>{if(!localIds.has(id))actions.push({type:'delete',id});});
-                    for(let i=0;i<actions.length;i+=400){const batch=writeBatch(window.remoteDB);actions.slice(i,i+400).forEach(action=>{const ref=doc(window.remoteDB,TURMAS_COLLECTION,action.id);action.type==='delete'?batch.delete(ref):batch.set(ref,action.row,{merge:false});});await batch.commit();}
-                    await setDoc(doc(window.remoteDB,'sgt','metadados'),{logs,substitutions,blockedInstructors,extraInstructors,lastUpdate:now,updatedBy:safeString(user&&user.email)},{merge:true});
-                    cloudRowsRef.current=new Map(rows.map(r=>[r.cloudId,r]));
-                    setSyncStatus('saved'); setSyncDetail('Base do computador salva manualmente na nuvem.'); setLastSaved(new Date());
-                    showNotify(`Nuvem atualizada com ${rows.length} turma(s) únicas.`,'success');
-                } catch(e) {console.error(e);setSyncStatus('error');setSyncDetail('Falha ao salvar na nuvem. Os dados permanecem no computador.');showNotify(`Falha ao salvar na nuvem: ${e.code||e.message}`,'error');}
-                finally {setIsSaving(false);}
-            };
+            const saveToCloud=async()=>{if(isSaving)return;if(!navigator.onLine)return showNotify('Sem internet. Os dados permanecem no computador.','error');if(!window.remoteDB||!window.dbMethods||!window.auth||!window.auth.currentUser)return showNotify('Firebase ou autenticação indisponível.','error');setIsSaving(true);setSyncStatus('saving');try{const rows=dedupeClasses(readLocalRows()),{doc,writeBatch,setDoc,collection,getDocs}=window.dbMethods,snap=await getDocs(collection(window.remoteDB,TURMAS_COLLECTION)),cloudIds=new Set(snap.docs.map(d=>d.id)),localIds=new Set(rows.map(classCloudId)),actions=[];rows.forEach(r=>actions.push({type:'set',id:classCloudId(r),row:{...r,cloudId:classCloudId(r),_cloudUpdatedAt:new Date().toISOString()}}));cloudIds.forEach(id=>{if(!localIds.has(id))actions.push({type:'delete',id});});for(let i=0;i<actions.length;i+=400){const batch=writeBatch(window.remoteDB);actions.slice(i,i+400).forEach(x=>{const ref=doc(window.remoteDB,TURMAS_COLLECTION,x.id);x.type==='delete'?batch.delete(ref):batch.set(ref,x.row,{merge:false});});await batch.commit();}await setDoc(doc(window.remoteDB,'sgt','metadados'),{logs,substitutions,blockedInstructors,extraInstructors,lastUpdate:new Date().toISOString(),updatedBy:safeString(user&&user.email)},{merge:true});setSyncStatus('saved');setSyncDetail('Computador e nuvem atualizados.');showNotify(`Nuvem atualizada com ${rows.length} turma(s).`);}catch(e){setSyncStatus('error');showNotify(`Falha ao salvar na nuvem: ${e.code||e.message}`,'error');}finally{setIsSaving(false);}};
 
             const installApp = async () => {
                 if (window.matchMedia('(display-mode: standalone)').matches) return showNotify('O S.G.T já está instalado neste computador.','success');
@@ -608,7 +569,7 @@
                 if(!confirm('Restaurar este backup? O estado atual será salvo automaticamente antes da restauração.'))return;
                 await persist(data,substitutions,addLog('Backup de segurança','SISTEMA','Atual','Antes da restauração'),blockedInstructors);
                 await persist(selected.data,selected.substitutions||[],selected.logs||[],selected.blockedInstructors||[]);
-                showNotify('Backup restaurado no computador. Clique em Salvar na nuvem quando desejar.','success');
+                showNotify('Backup restaurado no computador e encaminhado para a nuvem.','success');
             };
 
             const addLog = (type, classId, before, after) => {
@@ -1008,24 +969,63 @@ const handleClearAllData = () => {
                 return { rows:filtered, analysts,courses,instructors,summary,visibleAnalysts,courseMatrix,relation,instructorCourses,statusCounts,totals:{turmas:filtered.length,alunos:filtered.reduce((sum,row)=>sum+(parseInt(row.alunos,10)||0),0),instructors:new Set(filtered.map(r=>r.statInstructor).filter(i=>i&&i!=='Não atribuído')).size},validPeriod:true,referenceDate:referenceDate.getFullYear() + '-' + String(referenceDate.getMonth() + 1).padStart(2,'0') + '-' + String(referenceDate.getDate()).padStart(2,'0') };
             }, [data, statsPeriod, canonicalNameMap]);
 
-            const getLearningType = row => getSafeModalidade(row)==='Técnica'?'Técnica':'Qualificação';
-            const isSescoopCourse = course => normalizeText(course).includes('sescoop');
-            const courseLabel = course => isSescoopCourse(course)?'Administrativo Sescoop':safeString(course||'Não informado');
-            const managementReport = useMemo(()=>{
-                const learning={Qualificação:{tipo:'Qualificação',turmas:0,alunos:0},Técnica:{tipo:'Técnica',turmas:0,alunos:0}};
-                const analysts={},instructors={};
-                const add=(bucket,name,row)=>{if(!bucket[name])bucket[name]={nome:name,total:0,qualificacao:0,tecnica:0,sescoopQualificacao:0,sescoopTecnica:0,cursosQualificacao:{},cursosTecnica:{}};const x=bucket[name],type=getLearningType(row),course=courseLabel(row.curso);x.total++;if(type==='Técnica'){x.tecnica++;x.cursosTecnica[course]=(x.cursosTecnica[course]||0)+1;if(isSescoopCourse(row.curso))x.sescoopTecnica++;}else{x.qualificacao++;x.cursosQualificacao[course]=(x.cursosQualificacao[course]||0)+1;if(isSescoopCourse(row.curso))x.sescoopQualificacao++;}};
-                (processedData||[]).forEach(row=>{const type=getLearningType(row),n=parseInt(row.alunos,10)||0;learning[type].turmas++;learning[type].alunos+=n;add(analysts,getCanonical(row.analista)||'Não informado',row);const inst=row.instrutorAtual||getActiveInfoOnDate(row,new Date(viewDate+'T00:00:00')).inst||row.instrutor1||'Não atribuído';add(instructors,inst,row);});
-                const finish=b=>Object.values(b).map(x=>({...x,cursosQualificacaoTexto:Object.entries(x.cursosQualificacao).sort().map(([k,v])=>`${k}: ${v}`).join(' | ')||'Nenhum',cursosTecnicaTexto:Object.entries(x.cursosTecnica).sort().map(([k,v])=>`${k}: ${v}`).join(' | ')||'Nenhum'})).sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
-                return {learning:Object.values(learning),analysts:finish(analysts),instructors:finish(instructors)};
-            },[processedData,viewDate,canonicalNameMap]);
-            const copyRichElement = async id => {
-                const source=document.getElementById(id); if(!source)return showNotify('Bloco não encontrado.','error');
-                const clone=source.cloneNode(true); clone.querySelectorAll('.copy-exclude').forEach(el=>el.remove());
-                const original=[source,...source.querySelectorAll('*')], copied=[clone,...clone.querySelectorAll('*')];
-                original.forEach((el,i)=>{if(!copied[i])return;const cs=getComputedStyle(el);copied[i].setAttribute('style',`font-family:${cs.fontFamily};font-size:${cs.fontSize};font-weight:${cs.fontWeight};color:${cs.color};background:${cs.backgroundColor};border:${cs.border};padding:${cs.padding};text-align:${cs.textAlign};`);});
-                const html=`<div style="font-family:Arial,sans-serif">${clone.outerHTML}</div>`; const text=clone.innerText;
-                try {if(navigator.clipboard&&window.ClipboardItem){await navigator.clipboard.write([new ClipboardItem({'text/html':new Blob([html],{type:'text/html'}),'text/plain':new Blob([text],{type:'text/plain'})})]);}else{const range=document.createRange();range.selectNodeContents(source);const sel=getSelection();sel.removeAllRanges();sel.addRange(range);document.execCommand('copy');sel.removeAllRanges();}showNotify('Conteúdo copiado com formatação, cores e estrutura para o e-mail.');}catch(e){console.error(e);showNotify('Não foi possível copiar o conteúdo formatado.','error');}
+            const isSescoopCourse=c=>normalizeText(c).includes('sescoop');
+            const activeStatisticsRows=useMemo(()=>(processedData||[]).filter(row=>row.status!=='Finalizado'&&row.status!=='Agendado'),[processedData]);
+            const instructorUnifiedReport=useMemo(()=>{const result={};activeStatisticsRows.forEach(row=>{const activeInfo=getActiveInfoOnDate(row,new Date(viewDate+'T00:00:00'));const name=getCanonical(row.instrutorAtual||activeInfo.inst);if(!name)return;const tech=getSafeModalidade(row)==='Técnica',course=isSescoopCourse(row.curso)?'Administrativo Sescoop':safeString(row.curso||'Não informado');if(!result[name])result[name]={nome:name,totalTurmas:0,totalAlunos:0,qualificacao:0,tecnica:0,sescoopQualificacao:0,sescoopTecnica:0,cursosQualificacao:{},cursosTecnica:{}};const x=result[name];x.totalTurmas++;x.totalAlunos+=parseInt(row.alunos,10)||0;if(tech){x.tecnica++;x.cursosTecnica[course]=(x.cursosTecnica[course]||0)+1;if(isSescoopCourse(row.curso))x.sescoopTecnica++;}else{x.qualificacao++;x.cursosQualificacao[course]=(x.cursosQualificacao[course]||0)+1;if(isSescoopCourse(row.curso))x.sescoopQualificacao++;}});return Object.values(result).map(x=>({...x,media:x.totalTurmas?Math.round(x.totalAlunos/x.totalTurmas):0,cursosQualificacaoLista:Object.entries(x.cursosQualificacao).sort(),cursosTecnicaLista:Object.entries(x.cursosTecnica).sort()})).sort((a,b)=>b.totalAlunos-a.totalAlunos||a.nome.localeCompare(b.nome,'pt-BR'));},[activeStatisticsRows,viewDate,canonicalNameMap]);
+            const analystDetailedReport=useMemo(()=>{const result={};activeStatisticsRows.forEach(row=>{const name=getCanonical(row.analista)||'Não informado',tech=getSafeModalidade(row)==='Técnica',course=isSescoopCourse(row.curso)?'Administrativo Sescoop':safeString(row.curso||'Não informado');if(!result[name])result[name]={nome:name,totalTurmas:0,totalAlunos:0,qualificacao:0,tecnica:0,sescoopQualificacao:0,sescoopTecnica:0,cursosQualificacao:{},cursosTecnica:{}};const x=result[name];x.totalTurmas++;x.totalAlunos+=parseInt(row.alunos,10)||0;if(tech){x.tecnica++;x.cursosTecnica[course]=(x.cursosTecnica[course]||0)+1;if(isSescoopCourse(row.curso))x.sescoopTecnica++;}else{x.qualificacao++;x.cursosQualificacao[course]=(x.cursosQualificacao[course]||0)+1;if(isSescoopCourse(row.curso))x.sescoopQualificacao++;}});return Object.values(result).map(x=>({...x,cursosQualificacaoTexto:Object.entries(x.cursosQualificacao).sort().map(([k,v])=>`${k}: ${v}`).join(' | ')||'Nenhum',cursosTecnicaTexto:Object.entries(x.cursosTecnica).sort().map(([k,v])=>`${k}: ${v}`).join(' | ')||'Nenhum'})).sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));},[activeStatisticsRows,canonicalNameMap]);
+            const escapeEmailHtml=value=>safeString(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+            const getInstructorLoadStatus=inst=>{
+                if(inst.totalAlunos>=250)return {label:'Carga máxima • Alerta',bg:'#fee2e2',color:'#991b1b',border:'#fca5a5'};
+                if(inst.totalAlunos>=200)return {label:'Carga alta',bg:'#ffedd5',color:'#9a3412',border:'#fdba74'};
+                if(inst.totalAlunos<100)return {label:'Carga baixa • Disponível',bg:'#dbeafe',color:'#1e40af',border:'#93c5fd'};
+                return {label:'Carga adequada',bg:'#d1fae5',color:'#065f46',border:'#6ee7b7'};
+            };
+            const buildCourseRowsEmail=(items,color,border)=>items.length?items.map(([course,count])=>`<tr><td style="font-family:Arial,sans-serif;font-size:12px;color:#334155;padding:7px 9px;border:1px solid ${border};background:#ffffff">${escapeEmailHtml(course)}</td><td width="42" align="center" style="font-family:Arial,sans-serif;font-size:12px;font-weight:bold;color:${color};padding:7px 5px;border:1px solid ${border};background:#ffffff">${count}</td></tr>`).join(''):`<tr><td colspan="2" style="font-family:Arial,sans-serif;font-size:12px;font-style:italic;color:#94a3b8;padding:12px;border:1px solid ${border};background:#ffffff">Nenhuma turma ativa</td></tr>`;
+            const buildInstructorEmailCard=(inst,index,fullWidth=false)=>{
+                const status=getInstructorLoadStatus(inst),width=fullWidth?'680':'540';
+                return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="${width}" style="width:${width}px;max-width:100%;border-collapse:separate;border-spacing:0;border:1px solid #e2e8f0;border-radius:12px;background:#ffffff;font-family:Arial,sans-serif">
+                    <tr><td style="padding:14px 16px;background:#faf5ff;border-bottom:1px solid #f3e8ff">
+                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+                            <td width="48" valign="middle"><div style="width:38px;height:38px;line-height:38px;text-align:center;border-radius:50%;background:#7e22ce;color:#ffffff;font-size:14px;font-weight:bold">${index+1}º</div></td>
+                            <td valign="middle"><div style="font-size:16px;font-weight:bold;color:#0f172a">${escapeEmailHtml(inst.nome)}</div><div style="font-size:9px;font-weight:bold;letter-spacing:.5px;color:#64748b;text-transform:uppercase;margin-top:3px">Responsabilidade atual</div></td>
+                            <td width="150" align="right" valign="middle"><span style="display:inline-block;text-align:center;font-size:10px;font-weight:bold;line-height:14px;padding:8px 10px;border-radius:8px;background:${status.bg};color:${status.color};border:1px solid ${status.border}">${escapeEmailHtml(status.label)}</span></td>
+                        </tr></table>
+                    </td></tr>
+                    <tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr>
+                        <td width="33.33%" align="center" style="padding:14px 4px;border-right:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0"><div style="font-size:24px;font-weight:bold;color:#7e22ce">${inst.totalTurmas}</div><div style="font-size:9px;font-weight:bold;color:#64748b;text-transform:uppercase;margin-top:4px">Turmas ativas</div></td>
+                        <td width="33.33%" align="center" style="padding:14px 4px;border-right:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0"><div style="font-size:24px;font-weight:bold;color:#1d4ed8">${inst.totalAlunos}</div><div style="font-size:9px;font-weight:bold;color:#64748b;text-transform:uppercase;margin-top:4px">Alunos ativos</div></td>
+                        <td width="33.33%" align="center" style="padding:14px 4px;border-bottom:1px solid #e2e8f0"><div style="font-size:24px;font-weight:bold;color:#047857">${inst.media}</div><div style="font-size:9px;font-weight:bold;color:#64748b;text-transform:uppercase;margin-top:4px">Média por turma</div></td>
+                    </tr></table></td></tr>
+                    <tr><td style="padding:14px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+                        <td width="49%" valign="top" style="padding:0 6px 0 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;background:#eff6ff;border:1px solid #bfdbfe"><tr><td style="padding:10px;font-size:11px;font-weight:bold;color:#1e3a8a;text-transform:uppercase">Qualificação</td><td width="36" align="center"><span style="display:inline-block;min-width:24px;padding:5px;border-radius:14px;background:#1d4ed8;color:#ffffff;font-size:11px;font-weight:bold">${inst.qualificacao}</span></td></tr>${buildCourseRowsEmail(inst.cursosQualificacaoLista,'#1d4ed8','#dbeafe')}</table></td>
+                        <td width="2%">&nbsp;</td>
+                        <td width="49%" valign="top" style="padding:0 0 0 6px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;background:#fffbeb;border:1px solid #fde68a"><tr><td style="padding:10px;font-size:11px;font-weight:bold;color:#78350f;text-transform:uppercase">Técnica</td><td width="36" align="center"><span style="display:inline-block;min-width:24px;padding:5px;border-radius:14px;background:#d97706;color:#ffffff;font-size:11px;font-weight:bold">${inst.tecnica}</span></td></tr>${buildCourseRowsEmail(inst.cursosTecnicaLista,'#b45309','#fef3c7')}</table></td>
+                    </tr></table></td></tr>
+                    <tr><td style="padding:0 14px 14px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f5f3ff;border:1px solid #ddd6fe;border-collapse:separate;border-radius:8px"><tr><td style="padding:10px 12px;font-size:11px;font-weight:bold;color:#5b21b6;text-transform:uppercase">Administrativo Sescoop</td><td align="right" style="padding:8px"><span style="display:inline-block;padding:6px 8px;background:#dbeafe;color:#1e40af;font-size:10px;font-weight:bold;border-radius:5px">Qualificação: ${inst.sescoopQualificacao}</span>&nbsp;<span style="display:inline-block;padding:6px 8px;background:#ffedd5;color:#9a3412;font-size:10px;font-weight:bold;border-radius:5px">Técnica: ${inst.sescoopTecnica}</span></td></tr></table></td></tr>
+                </table>`;
+            };
+            const writeRichEmailClipboard=async(html,text,successMessage)=>{
+                try{
+                    if(navigator.clipboard&&window.ClipboardItem){await navigator.clipboard.write([new ClipboardItem({'text/html':new Blob([html],{type:'text/html'}),'text/plain':new Blob([text],{type:'text/plain'})})]);}
+                    else{const holder=document.createElement('div');holder.contentEditable='true';holder.style.position='fixed';holder.style.left='-9999px';holder.innerHTML=html;document.body.appendChild(holder);const range=document.createRange();range.selectNodeContents(holder);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);document.execCommand('copy');selection.removeAllRanges();holder.remove();}
+                    showNotify(successMessage);
+                }catch(error){console.error(error);showNotify('Não foi possível copiar com a formatação completa.','error');}
+            };
+            const copyInstructorEmail=async(inst,index)=>{
+                const card=buildInstructorEmailCard(inst,index,true);
+                const html=`<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff"><tr><td align="center" style="padding:12px">${card}</td></tr></table>`;
+                const text=`${inst.nome}\nTurmas ativas: ${inst.totalTurmas}\nAlunos ativos: ${inst.totalAlunos}\nMédia por turma: ${inst.media}`;
+                await writeRichEmailClipboard(html,text,`Relatório de ${inst.nome} copiado para o e-mail.`);
+            };
+            const copyAllInstructorEmails=async()=>{
+                const rows=[];for(let i=0;i<instructorUnifiedReport.length;i+=2){const left=buildInstructorEmailCard(instructorUnifiedReport[i],i),right=instructorUnifiedReport[i+1]?buildInstructorEmailCard(instructorUnifiedReport[i+1],i+1):'';rows.push(`<tr><td width="50%" valign="top" style="padding:7px">${left}</td><td width="50%" valign="top" style="padding:7px">${right}</td></tr>`);}
+                const html=`<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-family:Arial,sans-serif;background:#ffffff"><tr><td style="padding:16px 18px;background:#7e22ce;color:#ffffff"><div style="font-size:18px;font-weight:bold">Detalhamento e média individual por instrutor</div><div style="font-size:11px;margin-top:5px;color:#f3e8ff">Somente turmas ativas sob responsabilidade atual na data de referência.</div></td></tr><tr><td style="padding:8px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${rows.join('')}</table></td></tr></table>`;
+                const text=instructorUnifiedReport.map(x=>`${x.nome}: ${x.totalTurmas} turmas, ${x.totalAlunos} alunos, média ${x.media}`).join('\n');
+                await writeRichEmailClipboard(html,text,'Relatório completo copiado em formato compatível com e-mail.');
+            };
+            const copyRichElement=async id=>{
+                if(id==='relatorio-unificado-instrutores')return copyAllInstructorEmails();
+                const source=document.getElementById(id);if(!source)return;const html=`<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td>${source.innerHTML}</td></tr></table>`;await writeRichEmailClipboard(html,source.innerText,'Conteúdo copiado para o e-mail.');
             };
             const updateStatsFilter = (field, value) => {
                 setStatsPeriod(current => {
@@ -2931,17 +2931,63 @@ const redistributeBlockedInstructorRoles = (sourceRows, blockedList = blockedIns
 };
 
 const handleBlockInstructor = (instructorName) => {
-    const cleanName=getCanonical(instructorName); const blockNorm=normalizeText(cleanName);
-    if(!blockNorm)return showNotify("Instrutor inválido para bloqueio.","error");
-    if(blockedInstructors.includes(blockNorm))return showNotify(`${cleanName} já está bloqueado no sistema.`,"error");
-    if(!window.confirm(`Bloquear ${cleanName} para novas seleções?\n\nAs turmas existentes serão mantidas sem redistribuição automática.`))return;
-    const nextBlocked=[...new Set([...blockedInstructors,blockNorm])];
-    const nextWhitelist=tecnicaWhitelist.filter(nome=>normalizeText(nome)!==blockNorm);
-    const nextExtraInstructors=extraInstructors.filter(nome=>normalizeText(nome)!==blockNorm);
-    setTecnicaWhitelist(nextWhitelist);setExtraInstructors(nextExtraInstructors);setBlockedInstructors(nextBlocked);
-    localStorage.setItem('senacWhitelist_v1',JSON.stringify(nextWhitelist));localStorage.setItem(EXTRA_INSTRUCTORS_KEY,JSON.stringify(nextExtraInstructors));localStorage.setItem(BLOCK_KEY,JSON.stringify(nextBlocked));
-    const newLogs=addLog("Bloqueio de Instrutor",cleanName,"Disponível","Bloqueado para novas seleções, sem redistribuição automática");
-    persist(data,substitutions,newLogs,nextBlocked);setSelectedInstructorDetail(null);showNotify(`${cleanName} bloqueado. As turmas existentes foram mantidas.`,`success`);
+    const cleanName = getCanonical(instructorName);
+    const blockNorm = normalizeText(cleanName);
+
+    if (!blockNorm) {
+        showNotify("Instrutor inválido para bloqueio.", "error");
+        return;
+    }
+
+    if (blockedInstructors.includes(blockNorm)) {
+        showNotify(`${cleanName} já está bloqueado no sistema.`, "error");
+        return;
+    }
+
+    const affected = data.reduce((acc, row) => {
+        return acc + getBlockRolesForClass(row).filter(role => normalizeText(row[role]) === blockNorm).length;
+    }, 0);
+
+    const ok = window.confirm(
+        `Bloquear ${cleanName}?\n\n` +
+        `O instrutor sairá das listas do sistema e ${affected} posição(ões) de turma serão redistribuídas automaticamente respeitando carga, curso, técnica e futuros instrutores da mesma turma.`
+    );
+
+    if (!ok) return;
+
+    const nextBlocked = [...new Set([...blockedInstructors, blockNorm])];
+    const redistribution = redistributeBlockedInstructorRoles(data, nextBlocked);
+    const newRows = redistribution.rows;
+    const changes = redistribution.changes;
+    const unresolved = redistribution.unresolved;
+
+    const nextWhitelist = tecnicaWhitelist.filter(nome => normalizeText(nome) !== blockNorm);
+    setTecnicaWhitelist(nextWhitelist);
+    localStorage.setItem('senacWhitelist_v1', JSON.stringify(nextWhitelist));
+
+    setBlockedInstructors(nextBlocked);
+    localStorage.setItem(BLOCK_KEY, JSON.stringify(nextBlocked));
+    const nextExtraInstructors = extraInstructors.filter(nome => normalizeText(nome) !== blockNorm);
+    setExtraInstructors(nextExtraInstructors);
+    localStorage.setItem(EXTRA_INSTRUCTORS_KEY, JSON.stringify(nextExtraInstructors));
+
+    const logEntry = {
+        id: Date.now(),
+        timestamp: new Date().toISOString(),
+        type: "Bloqueio de Instrutor",
+        classId: cleanName,
+        before: `${cleanName} ativo na base.`,
+        after: `Bloqueado. ${changes.length} posição(ões) redistribuída(s). ${redistribution.balanceMoves.length} ajuste(s) cronológico(s). ${unresolved.length} sem substituto. Meta: diferença máxima de ${BALANCE_LIMITS.maxGap} alunos por mês quando matematicamente possível.`
+    };
+
+    persist(newRows, substitutions, [logEntry, ...logs], nextBlocked);
+    setSelectedInstructorDetail(null);
+
+    if (unresolved.length > 0) {
+        showNotify(`Instrutor bloqueado, mas ${unresolved.length} posição(ões) ficaram sem substituto seguro.`, "error");
+    } else {
+        showNotify(`${cleanName} bloqueado: ${changes.length} posição(ões) redistribuída(s), meta mensal ${BALANCE_LIMITS.maxGap} alunos.`, "success");
+    }
 };
 
 useEffect(() => {
@@ -3356,11 +3402,6 @@ useEffect(() => {
                     
                     const now = new Date();
                     const fileName = `SGT_Backup_${now.toISOString().split('T')[0]}_${now.getHours()}h${now.getMinutes()}.xlsx`;
-                    const addSheet=(name,rows)=>XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{Informação:'Sem registros'}]),name.slice(0,31));
-                    addSheet('Tipos_Aprendizagem',managementReport.learning.map(x=>({'Tipo de aprendizagem':x.tipo,Turmas:x.turmas,Alunos:x.alunos})));
-                    addSheet('Turmas_por_Analista',managementReport.analysts.map(x=>({Analista:x.nome,Qualificação:x.qualificacao,'Cursos Qualificação':x.cursosQualificacaoTexto,Técnica:x.tecnica,'Cursos Técnicos':x.cursosTecnicaTexto,'Sescoop Qualificação':x.sescoopQualificacao,'Sescoop Técnica':x.sescoopTecnica,Total:x.total})));
-                    addSheet('Cursos_por_Instrutor',managementReport.instructors.map(x=>({Instrutor:x.nome,Qualificação:x.qualificacao,'Cursos Qualificação':x.cursosQualificacaoTexto,Técnica:x.tecnica,'Cursos Técnicos':x.cursosTecnicaTexto,'Sescoop Qualificação':x.sescoopQualificacao,'Sescoop Técnica':x.sescoopTecnica,Total:x.total})));
-                    addSheet('Analise_por_Periodo',statisticsAnalysis.rows.map(row=>({Turma:row.id,Analista:row.statAnalyst,Curso:row.statCourse,Instrutor:row.statInstructor,Status:row.statStatus,Alunos:parseInt(row.alunos,10)||0,Modalidade:getLearningType(row),Início:formatDatePTBR(row.inicio),Término:formatDatePTBR(row.termino)})));
                     XLSX.writeFile(wb, fileName);
                     showNotify("Backup Completo baixado com sucesso!");
                 } catch (err) {
@@ -3375,20 +3416,8 @@ useEffect(() => {
                 return s;
             };
 
-            const normalizeLegacyCourse = (value) => {
-                const raw=safeString(value).trim();
-                const normalized=normalizeText(raw);
-                if (normalized === 'adm sescoop' || normalized === 'administrativo (sescoop)' || normalized === 'administrativo sescoop') return 'Administrativo Sescoop';
-                return raw || 'Administrativo';
-            };
-            const normalizeLegacyModality = (value) => {
-                const raw=safeString(value).trim();
-                const normalized=normalizeText(raw);
-                if (normalized === 'qualificacao' || normalized === 'aperfeicoamento') return 'Aperfeiçoamento';
-                if (normalized === 'tecnica' || normalized === 'tecnico') return 'Técnica';
-                return raw || 'Aperfeiçoamento';
-            };
-
+            const normalizeLegacyCourse=v=>{const raw=safeString(v).trim(),n=normalizeText(raw);return ['adm sescoop','administrativo (sescoop)','administrativo sescoop'].includes(n)?'Administrativo Sescoop':(raw||'Administrativo');};
+            const normalizeLegacyModality=v=>{const raw=safeString(v).trim(),n=normalizeText(raw);if(['qualificacao','aperfeicoamento'].includes(n))return 'Aperfeiçoamento';if(['tecnica','tecnico'].includes(n))return 'Técnica';return raw||'Aperfeiçoamento';};
             const handleFileUpload = (e) => {
                 const file = e.target.files[0]; if (!file) return;
                 const reader = new FileReader();
@@ -3408,10 +3437,10 @@ useEffect(() => {
                                 const ws = wb.Sheets["Turmas_DB"]; 
                                 const jsonData = XLSX.utils.sheet_to_json(ws); 
                                 newDB = dedupeClasses(jsonData.map(row => ({
-                                    id: safeString(row['Turma'] || row['id']),
+                                    id: safeString(row['Turma'] || row['id'] || row['turma'] || row['codigo']),
                                     modalidade: normalizeLegacyModality(row['APZ'] || row['modalidade'] || row['Tipo de aprendizagem']),
                                     curso: normalizeLegacyCourse(row['Curso'] || row['curso']),
-                                    analista: safeString(row['Analistas'] || row['analista']),
+                                    analista: safeString(row['Analistas'] || row['Analista'] || row['analista']),
                                     alunos: parseInt(row['Alunos'] || row['alunos']) || 0,
                                     inicio: fmtDate(row['Início'] || row['inicio']),
                                     termino: fmtDate(row['Término'] || row['termino']),
@@ -3422,7 +3451,6 @@ useEffect(() => {
                                     instrutor3: safeString(row['Instrutor 3'] || row['instrutor3']),
                                     instrutorAtual: safeString(row['Instrutor Atual'] || row['instrutorAtual']),
                                     status: safeString(row['Situação'] || row['status']),
-                                    autoAssignedLogs: undefined
                                 })));
                                 importedClasses = newDB.length; 
                             }
@@ -3435,18 +3463,15 @@ useEffect(() => {
                                 const ws = wb.Sheets["Logs_DB"]; 
                                 newLogsDB = XLSX.utils.sheet_to_json(ws); 
                             }
-                            const legacyImportLog = {
-                                id: Date.now(), timestamp: new Date().toISOString(), type: 'Importação de backup legado', classId: 'LOTE',
-                                before: `${jsonData ? jsonData.length : importedClasses} linha(s) lida(s)`,
-                                after: `${importedClasses} turma(s) única(s) reconhecida(s); nomenclatura Sescoop atualizada sem redistribuição automática.`
-                            };
-                            newLogsDB = [legacyImportLog, ...(Array.isArray(newLogsDB) ? newLogsDB : [])];
-                            if (cleanImportLog) newLogsDB = [cleanImportLog, ...newLogsDB];
+                            if (cleanImportLog) {
+                                newLogsDB = [cleanImportLog, ...newLogsDB];
+                            }
+                            
                             const saved = await persist(newDB, newSubsDB, newLogsDB);
                             if (cleanImportSummary) {
                                 setImportSummaryModal(cleanImportSummary);
                             }
-                            showNotify(saved ? `Backup reconhecido: ${importedClasses} turma(s) únicas salvas no computador. Revise os dados e clique em Salvar na nuvem quando desejar.` : `Não foi possível concluir a importação.`, saved ? 'success' : 'error');
+                            showNotify(saved?`Backup reconhecido: ${importedClasses} turma(s) únicas salvas no computador. Clique em Salvar na nuvem quando desejar.`:'Falha na importação.',saved?'success':'error');
                             return;
                         }
 
@@ -3632,7 +3657,7 @@ useEffect(() => {
                                
                             }
                         }
-                    } catch (err) { showNotify("Erro ao ler arquivo. Verifique se é um Excel válido.", "error"); }
+                    } catch (err) { console.error('Erro ao importar backup:', err); showNotify(`Erro ao importar backup: ${err && err.message ? err.message : 'arquivo não reconhecido'}.`, 'error'); }
                 };
                 reader.readAsArrayBuffer(file); e.target.value = null;
             };
@@ -4239,7 +4264,7 @@ useEffect(() => {
                             <div className="flex items-center gap-6">
                                 <button onClick={handleFullBackupExport} className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-xs flex gap-1 items-center shadow-lg transition border border-indigo-500 animate-pulse hover:animate-none"><Icons.Sync /> Backup</button>
                                 {LOCAL_TEST_MODE && <span className="px-3 py-2 bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold text-xs uppercase tracking-wide">Modo Local</span>}
-                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos no PC (v129)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
+                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos no PC (v133)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
                                 
                                 {/* BOTÕES DE AÇÃO PRINCIPAIS */}
                                 <div className="flex gap-2"> 
@@ -4267,7 +4292,7 @@ useEffect(() => {
                                 <button onClick={() => {setActiveTab('relatorios'); setReportType('logs');}} className={`px-4 py-2 rounded-t-lg text-xs font-bold transition border-b-2 ${activeTab==='relatorios' && reportType==='logs'?'border-purple-600 text-purple-900 bg-purple-50':'border-transparent text-gray-500 hover:text-purple-600 hover:bg-purple-50'}`}>Histórico</button>
                                 <button onClick={installApp} className="px-3 py-1 text-purple-700 hover:bg-purple-50 border border-purple-200 rounded text-xs font-bold flex items-center gap-1 transition"><Icons.Download /> Instalar App</button>
                                 <button onClick={restoreBackupPrompt} disabled={isSaving} className="px-3 py-1 text-indigo-700 hover:bg-indigo-50 border border-indigo-200 rounded text-xs font-bold flex items-center gap-1 transition disabled:opacity-50"><Icons.Download /> Restaurar backup</button>
-                                <button onClick={saveToCloud} disabled={isSaving || !isOnline} className="px-3 py-1 text-white bg-blue-600 hover:bg-blue-700 border border-blue-700 rounded text-xs font-bold flex items-center gap-1 transition disabled:opacity-50" title="Envia manualmente a base salva no computador para o Firebase"><Icons.Upload /> {isSaving ? 'Salvando...' : 'Salvar na nuvem'}</button>
+                                <button onClick={saveToCloud} disabled={isSaving||!isOnline} className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-bold flex items-center gap-1 disabled:opacity-50"><Icons.Upload /> {isSaving?'Salvando...':'Salvar na nuvem'}</button>
                                 <span title={syncDetail} className={`px-2 py-1 rounded text-[10px] font-black ${syncStatus==='saved'?'bg-green-100 text-green-700':syncStatus==='error'?'bg-red-100 text-red-700':'bg-amber-100 text-amber-800'}`}>{syncStatus==='saved'?'PC + NUVEM':!isOnline?'OFFLINE • SALVO NO PC':'SALVO NO PC'}</span>
                                 {/* Botão de Limpar Banco */}
                                 <button onClick={handleClearAllData} className="px-3 py-1 text-red-600 hover:bg-red-50 border border-red-200 rounded text-xs font-bold flex items-center gap-1 transition mr-2">
@@ -4323,50 +4348,35 @@ useEffect(() => {
                                             </div>
                                         </div>
 
-                                        <div id="relatorio-gerencial-email" className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden mb-8">
-                                            <div className="px-5 py-4 bg-indigo-700 text-white flex justify-between items-center"><div><h3 className="font-black">Resumo gerencial</h3><p className="text-xs text-indigo-100">Qualificação, Técnica e Sescoop por responsável.</p></div><button onClick={()=>copyRichElement('relatorio-gerencial-email')} className="copy-exclude bg-white text-indigo-800 px-4 py-2 rounded-lg text-xs font-bold"><Icons.Copy/> Copiar para e-mail</button></div>
-                                            <div className="p-5"><h4 className="font-bold text-indigo-900 mb-2">Tipos de aprendizagem</h4><table className="min-w-full comp-table"><thead><tr><th>Tipo</th><th>Turmas</th><th>Alunos</th></tr></thead><tbody>{managementReport.learning.map(x=><tr key={x.tipo}><td className="font-bold">{x.tipo}</td><td>{x.turmas}</td><td>{x.alunos}</td></tr>)}</tbody></table></div>
-                                            <div className="p-5 border-t"><h4 className="font-bold text-emerald-900 mb-2">Detalhamento por analista</h4><div className="overflow-auto"><table className="min-w-full comp-table"><thead><tr><th>Analista</th><th>Qualificação</th><th>Cursos de Qualificação</th><th>Técnica</th><th>Cursos Técnicos</th><th>Sescoop Q/T</th><th>Total</th></tr></thead><tbody>{managementReport.analysts.map(x=><tr key={x.nome}><td className="font-bold">{x.nome}</td><td>{x.qualificacao}</td><td>{x.cursosQualificacaoTexto}</td><td>{x.tecnica}</td><td>{x.cursosTecnicaTexto}</td><td>{x.sescoopQualificacao} / {x.sescoopTecnica}</td><td className="font-black">{x.total}</td></tr>)}</tbody></table></div></div>
+                                        <div id="relatorio-detalhado-analistas" className="bg-white border border-emerald-200 rounded-2xl shadow-sm overflow-hidden mb-8">
+                                            <div className="px-5 py-4 bg-emerald-700 text-white flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-black">Detalhamento por analista</h3><p className="text-xs text-emerald-100">Somente turmas ativas na data de referência, com cursos de Qualificação, Técnica e Sescoop separados.</p></div><button onClick={()=>copyRichElement('relatorio-detalhado-analistas')} className="copy-exclude bg-white text-emerald-800 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2"><Icons.Copy/> Copiar para e-mail</button></div>
+                                            <div className="overflow-x-auto p-4"><table className="min-w-full comp-table"><thead><tr><th>Analista</th><th>Qualificação</th><th>Cursos de Qualificação</th><th>Técnica</th><th>Cursos Técnicos</th><th>Sescoop Q/T</th><th>Total Turmas</th><th>Total Alunos</th></tr></thead><tbody>{analystDetailedReport.map(item=><tr key={item.nome}><td className="font-bold">{item.nome}</td><td>{item.qualificacao}</td><td>{item.cursosQualificacaoTexto}</td><td>{item.tecnica}</td><td>{item.cursosTecnicaTexto}</td><td>{item.sescoopQualificacao} / {item.sescoopTecnica}</td><td className="font-bold">{item.totalTurmas}</td><td className="font-bold">{item.totalAlunos}</td></tr>)}</tbody></table></div>
                                         </div>
-                                        <div id="relatorio-instrutores-email" className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden mb-8"><div className="px-5 py-4 bg-purple-700 text-white flex justify-between items-center"><div><h3 className="font-black">Detalhamento individual por instrutor</h3><p className="text-xs text-purple-100">Quantitativo de cursos, Qualificação, Técnica e Sescoop.</p></div><button onClick={()=>copyRichElement('relatorio-instrutores-email')} className="copy-exclude bg-white text-purple-800 px-4 py-2 rounded-lg text-xs font-bold"><Icons.Copy/> Copiar para e-mail</button></div><div className="overflow-auto p-5"><table className="min-w-full comp-table"><thead><tr><th>Instrutor</th><th>Qualificação</th><th>Cursos de Qualificação</th><th>Técnica</th><th>Cursos Técnicos</th><th>Sescoop Q/T</th><th>Total</th></tr></thead><tbody>{managementReport.instructors.map(x=><tr key={x.nome}><td className="font-bold">{x.nome}</td><td>{x.qualificacao}</td><td>{x.cursosQualificacaoTexto}</td><td>{x.tecnica}</td><td>{x.cursosTecnicaTexto}</td><td>{x.sescoopQualificacao} / {x.sescoopTecnica}</td><td className="font-black">{x.total}</td></tr>)}</tbody></table></div></div>
-                                        <h3 className="text-lg font-bold text-slate-700 mb-4">Média Individual por Instrutor (Ranqueamento de Carga)</h3>
-                                        <div className="overflow-x-auto border rounded-lg">
-                                            <table className="min-w-full comp-table">
-                                                <thead>
-                                                    <tr>
-                                                        <th className="w-16 text-center">Rank</th>
-                                                        <th>Instrutor</th>
-                                                        <th className="text-center">Total Turmas</th>
-                                                        <th className="text-center">Total Alunos</th>
-                                                        <th className="text-center">Média (Alunos/Turma)</th>
-                                                        <th className="text-center">Status Carga</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {dashboardInstructors.map((inst, index) => {
-                                                        const mediaIndividual = inst.totalTurmas > 0 ? Math.round(inst.totalAlunos / inst.totalTurmas) : 0;
-                                                        let statusLabel = "Adequada";
-                                                        let statusClass = "bg-green-100 text-green-700 border-green-200";
-                                                        
-                                                        if (inst.totalAlunos >= 250) { statusLabel = "Máxima (Alerta)"; statusClass = "bg-red-100 text-red-700 border-red-200"; }
-                                                        else if (inst.totalAlunos >= 200) { statusLabel = "Alta"; statusClass = "bg-orange-100 text-orange-700 border-orange-200"; }
-                                                        else if (inst.totalAlunos < 100) { statusLabel = "Baixa (Disponível)"; statusClass = "bg-blue-100 text-blue-700 border-blue-200"; }
-
-                                                        return (
-                                                            <tr key={inst.nome} className="hover:bg-slate-50 transition">
-                                                                <td className="text-center font-bold text-slate-400">{index + 1}º</td>
-                                                                <td className="font-bold text-slate-700">{inst.nome}</td>
-                                                                <td className="text-center text-slate-600">{inst.totalTurmas}</td>
-                                                                <td className={`text-center font-bold ${inst.totalAlunos >= 200 ? 'text-red-600' : 'text-blue-700'}`}>{inst.totalAlunos}</td>
-                                                                <td className="text-center font-mono text-slate-600">{mediaIndividual}</td>
-                                                                <td className="text-center">
-                                                                    <span className={`px-2 py-1 rounded text-[10px] font-bold border ${statusClass}`}>{statusLabel}</span>
-                                                                </td>
-                                                            </tr>
-                                                        );
-                                                    })}
-                                                </tbody>
-                                            </table>
+                                        <div id="relatorio-unificado-instrutores" className="bg-white border border-purple-200 rounded-2xl shadow-sm overflow-hidden">
+                                            <div className="px-5 py-4 bg-gradient-to-r from-purple-800 to-fuchsia-700 text-white flex flex-wrap items-center justify-between gap-3">
+                                                <div><h3 className="text-lg font-black">Detalhamento e média individual por instrutor</h3><p className="text-xs text-purple-100 mt-1">Somente turmas ativas sob responsabilidade atual de cada instrutor na data de referência.</p></div>
+                                                <button onClick={copyAllInstructorEmails} className="copy-exclude bg-white text-purple-800 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow"><Icons.Copy/> Copiar para e-mail</button>
+                                            </div>
+                                            <div className="p-5 grid grid-cols-1 xl:grid-cols-2 gap-5 bg-slate-50">
+                                                {instructorUnifiedReport.map((inst,index)=>{let label='Carga adequada',statusStyle='bg-emerald-100 text-emerald-800 border-emerald-300';if(inst.totalAlunos>=250){label='Carga máxima • Alerta';statusStyle='bg-red-100 text-red-800 border-red-300';}else if(inst.totalAlunos>=200){label='Carga alta';statusStyle='bg-orange-100 text-orange-800 border-orange-300';}else if(inst.totalAlunos<100){label='Carga baixa • Disponível';statusStyle='bg-blue-100 text-blue-800 border-blue-300';}return (
+                                                    <article key={inst.nome} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden break-inside-avoid">
+                                                        <div className="px-4 py-3 bg-purple-50 border-b border-purple-100 flex items-center justify-between gap-3">
+                                                            <div className="flex items-center gap-3"><span className="w-9 h-9 rounded-full bg-purple-700 text-white font-black flex items-center justify-center">{index+1}º</span><div><h4 className="font-black text-slate-800">{inst.nome}</h4><p className="text-[10px] text-slate-500 uppercase font-bold">Responsabilidade atual</p></div></div>
+                                                            <div className="flex items-center gap-2"><button type="button" onClick={()=>copyInstructorEmail(inst,index)} className="copy-exclude inline-flex items-center gap-1 px-2.5 py-2 bg-white text-purple-700 border border-purple-200 rounded-lg text-[10px] font-black hover:bg-purple-50" title={`Copiar somente ${inst.nome} para o e-mail`}><Icons.Copy/> Copiar</button><span className={`inline-flex items-center justify-center text-center leading-tight px-3 py-2 rounded-lg text-[10px] font-black border min-w-[116px] ${statusStyle}`}>{label}</span></div>
+                                                        </div>
+                                                        <div className="grid grid-cols-3 divide-x border-b">
+                                                            <div className="p-3 text-center"><span className="block text-2xl font-black text-purple-800">{inst.totalTurmas}</span><span className="text-[9px] font-bold text-slate-500 uppercase">Turmas ativas</span></div>
+                                                            <div className="p-3 text-center"><span className="block text-2xl font-black text-blue-700">{inst.totalAlunos}</span><span className="text-[9px] font-bold text-slate-500 uppercase">Alunos ativos</span></div>
+                                                            <div className="p-3 text-center"><span className="block text-2xl font-black text-emerald-700">{inst.media}</span><span className="text-[9px] font-bold text-slate-500 uppercase">Média por turma</span></div>
+                                                        </div>
+                                                        <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                            <section className="rounded-lg border border-blue-200 bg-blue-50 p-3"><div className="flex justify-between items-center mb-2"><h5 className="font-black text-blue-900 text-xs uppercase">Qualificação</h5><span className="bg-blue-700 text-white rounded-full min-w-7 h-7 px-2 flex items-center justify-center font-black text-xs">{inst.qualificacao}</span></div><div className="space-y-1.5">{inst.cursosQualificacaoLista.length?inst.cursosQualificacaoLista.map(([curso,qtd])=><div key={curso} className="flex justify-between gap-3 bg-white rounded px-2 py-1.5 border border-blue-100 text-xs"><span className="font-semibold text-slate-700">{curso}</span><strong className="text-blue-800">{qtd}</strong></div>):<span className="text-xs text-slate-400 italic">Nenhuma turma ativa</span>}</div></section>
+                                                            <section className="rounded-lg border border-amber-200 bg-amber-50 p-3"><div className="flex justify-between items-center mb-2"><h5 className="font-black text-amber-900 text-xs uppercase">Técnica</h5><span className="bg-amber-600 text-white rounded-full min-w-7 h-7 px-2 flex items-center justify-center font-black text-xs">{inst.tecnica}</span></div><div className="space-y-1.5">{inst.cursosTecnicaLista.length?inst.cursosTecnicaLista.map(([curso,qtd])=><div key={curso} className="flex justify-between gap-3 bg-white rounded px-2 py-1.5 border border-amber-100 text-xs"><span className="font-semibold text-slate-700">{curso}</span><strong className="text-amber-800">{qtd}</strong></div>):<span className="text-xs text-slate-400 italic">Nenhuma turma ativa</span>}</div></section>
+                                                        </div>
+                                                        <div className="mx-4 mb-4 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2 flex items-center justify-between"><span className="text-xs font-black text-violet-900 uppercase">Administrativo Sescoop</span><div className="flex gap-2"><span className="bg-blue-100 text-blue-800 rounded px-2 py-1 text-[10px] font-bold">Qualificação: {inst.sescoopQualificacao}</span><span className="bg-amber-100 text-amber-800 rounded px-2 py-1 text-[10px] font-bold">Técnica: {inst.sescoopTecnica}</span></div></div>
+                                                    </article>
+                                                );})}
+                                            </div>
                                         </div>
                                     </>
                                 ) : (
@@ -5776,6 +5786,6 @@ useEffect(() => {
             </ErrorBoundary>
         );
     </script>
-<script>if('serviceWorker' in navigator && location.protocol!=='file:')navigator.serviceWorker.register('./sw.js?v=129').then(reg=>{reg.update();if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});}).catch(console.warn);</script>
+<script>if('serviceWorker' in navigator && location.protocol!=='file:')navigator.serviceWorker.register('./sw.js?v=133').then(reg=>{reg.update();if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});}).catch(console.warn);</script>
 </body>
 </html>
