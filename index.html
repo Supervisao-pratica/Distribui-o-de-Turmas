@@ -6,7 +6,7 @@
     <link rel="manifest" href="./manifest.webmanifest">
 <meta name="theme-color" content="#4c1d95">
 <link rel="apple-touch-icon" href="./icon-192.png">
-<title>S.G.T - Gestão de Turmas (v128 Salvamento local e nuvem manual)</title>
+<title>S.G.T - Gestão de Turmas (v129 Backup antigo compativel)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -3375,6 +3375,20 @@ useEffect(() => {
                 return s;
             };
 
+            const normalizeLegacyCourse = (value) => {
+                const raw=safeString(value).trim();
+                const normalized=normalizeText(raw);
+                if (normalized === 'adm sescoop' || normalized === 'administrativo (sescoop)' || normalized === 'administrativo sescoop') return 'Administrativo Sescoop';
+                return raw || 'Administrativo';
+            };
+            const normalizeLegacyModality = (value) => {
+                const raw=safeString(value).trim();
+                const normalized=normalizeText(raw);
+                if (normalized === 'qualificacao' || normalized === 'aperfeicoamento') return 'Aperfeiçoamento';
+                if (normalized === 'tecnica' || normalized === 'tecnico') return 'Técnica';
+                return raw || 'Aperfeiçoamento';
+            };
+
             const handleFileUpload = (e) => {
                 const file = e.target.files[0]; if (!file) return;
                 const reader = new FileReader();
@@ -3395,8 +3409,8 @@ useEffect(() => {
                                 const jsonData = XLSX.utils.sheet_to_json(ws); 
                                 newDB = dedupeClasses(jsonData.map(row => ({
                                     id: safeString(row['Turma'] || row['id']),
-                                    modalidade: safeString(row['APZ'] || row['modalidade'] || 'Aperfeiçoamento'),
-                                    curso: safeString(row['Curso'] || row['curso'] || 'Administrativo'),
+                                    modalidade: normalizeLegacyModality(row['APZ'] || row['modalidade'] || row['Tipo de aprendizagem']),
+                                    curso: normalizeLegacyCourse(row['Curso'] || row['curso']),
                                     analista: safeString(row['Analistas'] || row['analista']),
                                     alunos: parseInt(row['Alunos'] || row['alunos']) || 0,
                                     inicio: fmtDate(row['Início'] || row['inicio']),
@@ -3421,15 +3435,18 @@ useEffect(() => {
                                 const ws = wb.Sheets["Logs_DB"]; 
                                 newLogsDB = XLSX.utils.sheet_to_json(ws); 
                             }
-                            if (cleanImportLog) {
-                                newLogsDB = [cleanImportLog, ...newLogsDB];
-                            }
-                            
+                            const legacyImportLog = {
+                                id: Date.now(), timestamp: new Date().toISOString(), type: 'Importação de backup legado', classId: 'LOTE',
+                                before: `${jsonData ? jsonData.length : importedClasses} linha(s) lida(s)`,
+                                after: `${importedClasses} turma(s) única(s) reconhecida(s); nomenclatura Sescoop atualizada sem redistribuição automática.`
+                            };
+                            newLogsDB = [legacyImportLog, ...(Array.isArray(newLogsDB) ? newLogsDB : [])];
+                            if (cleanImportLog) newLogsDB = [cleanImportLog, ...newLogsDB];
                             const saved = await persist(newDB, newSubsDB, newLogsDB);
                             if (cleanImportSummary) {
                                 setImportSummaryModal(cleanImportSummary);
                             }
-                            showNotify(saved ? `Importação concluída e salva automaticamente no computador e na nuvem: ${importedClasses} turma(s).` : `Importação salva no computador. A nuvem será atualizada automaticamente quando a conexão voltar.`, saved ? 'success' : 'error');
+                            showNotify(saved ? `Backup reconhecido: ${importedClasses} turma(s) únicas salvas no computador. Revise os dados e clique em Salvar na nuvem quando desejar.` : `Não foi possível concluir a importação.`, saved ? 'success' : 'error');
                             return;
                         }
 
@@ -4222,7 +4239,7 @@ useEffect(() => {
                             <div className="flex items-center gap-6">
                                 <button onClick={handleFullBackupExport} className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-xs flex gap-1 items-center shadow-lg transition border border-indigo-500 animate-pulse hover:animate-none"><Icons.Sync /> Backup</button>
                                 {LOCAL_TEST_MODE && <span className="px-3 py-2 bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold text-xs uppercase tracking-wide">Modo Local</span>}
-                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos no PC (v128)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
+                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos no PC (v129)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
                                 
                                 {/* BOTÕES DE AÇÃO PRINCIPAIS */}
                                 <div className="flex gap-2"> 
@@ -5759,6 +5776,6 @@ useEffect(() => {
             </ErrorBoundary>
         );
     </script>
-<script>if('serviceWorker' in navigator && location.protocol!=='file:')navigator.serviceWorker.register('./sw.js?v=128').then(reg=>{reg.update();if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});}).catch(console.warn);</script>
+<script>if('serviceWorker' in navigator && location.protocol!=='file:')navigator.serviceWorker.register('./sw.js?v=129').then(reg=>{reg.update();if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});}).catch(console.warn);</script>
 </body>
 </html>

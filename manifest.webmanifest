@@ -1,7 +1,7 @@
 {
   "name": "S.G.T - Gestão de Turmas",
   "short_name": "S.G.T",
-  "description": "Gestão de turmas com salvamento prioritário no computador e envio manual ao Firebase",
+  "description": "Gestão de turmas com salvamento prioritário no computador e compatibilidade com backups anteriores e envio manual ao Firebase",
   "id": "./index.html",
   "start_url": "./index.html",
   "scope": "./",
