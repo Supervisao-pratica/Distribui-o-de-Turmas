@@ -6,7 +6,7 @@
     <link rel="manifest" href="./manifest.webmanifest">
 <meta name="theme-color" content="#4c1d95">
 <link rel="apple-touch-icon" href="./icon-192.png">
-<title>S.G.T - Gestão de Turmas (v133 Copia fiel para email)</title>
+<title>S.G.T - Gestão de Turmas (v136 Sescoop lado a lado no email)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -980,28 +980,34 @@ const handleClearAllData = () => {
                 if(inst.totalAlunos<100)return {label:'Carga baixa • Disponível',bg:'#dbeafe',color:'#1e40af',border:'#93c5fd'};
                 return {label:'Carga adequada',bg:'#d1fae5',color:'#065f46',border:'#6ee7b7'};
             };
-            const buildCourseRowsEmail=(items,color,border)=>items.length?items.map(([course,count])=>`<tr><td style="font-family:Arial,sans-serif;font-size:12px;color:#334155;padding:7px 9px;border:1px solid ${border};background:#ffffff">${escapeEmailHtml(course)}</td><td width="42" align="center" style="font-family:Arial,sans-serif;font-size:12px;font-weight:bold;color:${color};padding:7px 5px;border:1px solid ${border};background:#ffffff">${count}</td></tr>`).join(''):`<tr><td colspan="2" style="font-family:Arial,sans-serif;font-size:12px;font-style:italic;color:#94a3b8;padding:12px;border:1px solid ${border};background:#ffffff">Nenhuma turma ativa</td></tr>`;
+            const buildCourseRowsEmail=(items,color,border)=>items.length?items.map(([course,count])=>`<tr><td style="font-family:Arial,sans-serif;font-size:10px;color:#334155;padding:5px 7px;border:1px solid ${border};background:#ffffff">${escapeEmailHtml(course)}</td><td width="42" align="center" style="font-family:Arial,sans-serif;font-size:10px;font-weight:bold;color:${color};padding:5px 4px;border:1px solid ${border};background:#ffffff">${count}</td></tr>`).join(''):`<tr><td colspan="2" style="font-family:Arial,sans-serif;font-size:10px;font-style:italic;color:#94a3b8;padding:8px;border:1px solid ${border};background:#ffffff">Nenhuma turma ativa</td></tr>`;
             const buildInstructorEmailCard=(inst,index,fullWidth=false)=>{
-                const status=getInstructorLoadStatus(inst),width=fullWidth?'680':'540';
+                const status=getInstructorLoadStatus(inst),width=fullWidth?'600':'470';
                 return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="${width}" style="width:${width}px;max-width:100%;border-collapse:separate;border-spacing:0;border:1px solid #e2e8f0;border-radius:12px;background:#ffffff;font-family:Arial,sans-serif">
-                    <tr><td style="padding:14px 16px;background:#faf5ff;border-bottom:1px solid #f3e8ff">
+                    <tr><td style="padding:10px 12px;background:#faf5ff;border-bottom:1px solid #f3e8ff">
                         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-                            <td width="48" valign="middle"><div style="width:38px;height:38px;line-height:38px;text-align:center;border-radius:50%;background:#7e22ce;color:#ffffff;font-size:14px;font-weight:bold">${index+1}º</div></td>
-                            <td valign="middle"><div style="font-size:16px;font-weight:bold;color:#0f172a">${escapeEmailHtml(inst.nome)}</div><div style="font-size:9px;font-weight:bold;letter-spacing:.5px;color:#64748b;text-transform:uppercase;margin-top:3px">Responsabilidade atual</div></td>
-                            <td width="150" align="right" valign="middle"><span style="display:inline-block;text-align:center;font-size:10px;font-weight:bold;line-height:14px;padding:8px 10px;border-radius:8px;background:${status.bg};color:${status.color};border:1px solid ${status.border}">${escapeEmailHtml(status.label)}</span></td>
+                            <td width="38" valign="middle" align="center"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="30" height="30" style="width:30px;height:30px;border-collapse:separate;border-spacing:0"><tr><td width="30" height="30" align="center" valign="middle" bgcolor="#7e22ce" style="width:30px;height:30px;min-width:30px;max-width:30px;border-radius:15px;background:#7e22ce;color:#ffffff;font-family:Arial,sans-serif;font-size:11px;font-weight:bold;line-height:30px;text-align:center">${index+1}º</td></tr></table></td>
+                            <td valign="middle"><div style="font-size:13px;font-weight:bold;color:#0f172a">${escapeEmailHtml(inst.nome)}</div><div style="font-size:9px;font-weight:bold;letter-spacing:.5px;color:#64748b;text-transform:uppercase;margin-top:3px">Responsabilidade atual</div></td>
+                            <td width="128" align="right" valign="middle"><span style="display:inline-block;text-align:center;font-size:10px;font-weight:bold;line-height:14px;padding:6px 8px;border-radius:7px;background:${status.bg};color:${status.color};border:1px solid ${status.border}">${escapeEmailHtml(status.label)}</span></td>
                         </tr></table>
                     </td></tr>
                     <tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr>
-                        <td width="33.33%" align="center" style="padding:14px 4px;border-right:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0"><div style="font-size:24px;font-weight:bold;color:#7e22ce">${inst.totalTurmas}</div><div style="font-size:9px;font-weight:bold;color:#64748b;text-transform:uppercase;margin-top:4px">Turmas ativas</div></td>
-                        <td width="33.33%" align="center" style="padding:14px 4px;border-right:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0"><div style="font-size:24px;font-weight:bold;color:#1d4ed8">${inst.totalAlunos}</div><div style="font-size:9px;font-weight:bold;color:#64748b;text-transform:uppercase;margin-top:4px">Alunos ativos</div></td>
-                        <td width="33.33%" align="center" style="padding:14px 4px;border-bottom:1px solid #e2e8f0"><div style="font-size:24px;font-weight:bold;color:#047857">${inst.media}</div><div style="font-size:9px;font-weight:bold;color:#64748b;text-transform:uppercase;margin-top:4px">Média por turma</div></td>
+                        <td width="33.33%" align="center" style="padding:10px 4px;border-right:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0"><div style="font-size:19px;font-weight:bold;color:#7e22ce">${inst.totalTurmas}</div><div style="font-size:9px;font-weight:bold;color:#64748b;text-transform:uppercase;margin-top:4px">Turmas ativas</div></td>
+                        <td width="33.33%" align="center" style="padding:10px 4px;border-right:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0"><div style="font-size:19px;font-weight:bold;color:#1d4ed8">${inst.totalAlunos}</div><div style="font-size:9px;font-weight:bold;color:#64748b;text-transform:uppercase;margin-top:4px">Alunos ativos</div></td>
+                        <td width="33.33%" align="center" style="padding:10px 4px;border-bottom:1px solid #e2e8f0"><div style="font-size:19px;font-weight:bold;color:#047857">${inst.media}</div><div style="font-size:9px;font-weight:bold;color:#64748b;text-transform:uppercase;margin-top:4px">Média por turma</div></td>
                     </tr></table></td></tr>
-                    <tr><td style="padding:14px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-                        <td width="49%" valign="top" style="padding:0 6px 0 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;background:#eff6ff;border:1px solid #bfdbfe"><tr><td style="padding:10px;font-size:11px;font-weight:bold;color:#1e3a8a;text-transform:uppercase">Qualificação</td><td width="36" align="center"><span style="display:inline-block;min-width:24px;padding:5px;border-radius:14px;background:#1d4ed8;color:#ffffff;font-size:11px;font-weight:bold">${inst.qualificacao}</span></td></tr>${buildCourseRowsEmail(inst.cursosQualificacaoLista,'#1d4ed8','#dbeafe')}</table></td>
-                        <td width="2%">&nbsp;</td>
-                        <td width="49%" valign="top" style="padding:0 0 0 6px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;background:#fffbeb;border:1px solid #fde68a"><tr><td style="padding:10px;font-size:11px;font-weight:bold;color:#78350f;text-transform:uppercase">Técnica</td><td width="36" align="center"><span style="display:inline-block;min-width:24px;padding:5px;border-radius:14px;background:#d97706;color:#ffffff;font-size:11px;font-weight:bold">${inst.tecnica}</span></td></tr>${buildCourseRowsEmail(inst.cursosTecnicaLista,'#b45309','#fef3c7')}</table></td>
+                    <tr><td style="padding:8px 8px 7px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;table-layout:fixed;border-collapse:collapse"><tr>
+                        <td width="49%" valign="top" style="width:49%;padding:0 3px 0 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#eff6ff;border:1px solid #bfdbfe"><tr><td style="padding:7px;font-size:10px;font-weight:bold;color:#1e3a8a;text-transform:uppercase">Qualificação</td><td width="36" align="center"><span style="display:inline-block;min-width:24px;padding:5px;border-radius:14px;background:#1d4ed8;color:#ffffff;font-size:11px;font-weight:bold">${inst.qualificacao}</span></td></tr>${buildCourseRowsEmail(inst.cursosQualificacaoLista,'#1d4ed8','#dbeafe')}</table></td>
+                        <td width="2%" style="width:2%;font-size:1px;line-height:1px">&nbsp;</td>
+                        <td width="49%" valign="top" style="width:49%;padding:0 0 0 3px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#fffbeb;border:1px solid #fde68a"><tr><td style="padding:7px;font-size:10px;font-weight:bold;color:#78350f;text-transform:uppercase">Técnica</td><td width="36" align="center"><span style="display:inline-block;min-width:24px;padding:5px;border-radius:14px;background:#d97706;color:#ffffff;font-size:11px;font-weight:bold">${inst.tecnica}</span></td></tr>${buildCourseRowsEmail(inst.cursosTecnicaLista,'#b45309','#fef3c7')}</table></td>
                     </tr></table></td></tr>
-                    <tr><td style="padding:0 14px 14px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f5f3ff;border:1px solid #ddd6fe;border-collapse:separate;border-radius:8px"><tr><td style="padding:10px 12px;font-size:11px;font-weight:bold;color:#5b21b6;text-transform:uppercase">Administrativo Sescoop</td><td align="right" style="padding:8px"><span style="display:inline-block;padding:6px 8px;background:#dbeafe;color:#1e40af;font-size:10px;font-weight:bold;border-radius:5px">Qualificação: ${inst.sescoopQualificacao}</span>&nbsp;<span style="display:inline-block;padding:6px 8px;background:#ffedd5;color:#9a3412;font-size:10px;font-weight:bold;border-radius:5px">Técnica: ${inst.sescoopTecnica}</span></td></tr></table></td></tr>
+                    <tr><td style="padding:0 8px 8px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:#f5f3ff;border:1px solid #ddd6fe;border-collapse:collapse"><tr>
+                        <td width="55%" valign="middle" style="width:55%;padding:6px 8px;font-family:Arial,sans-serif;font-size:9px;font-weight:bold;color:#5b21b6;text-transform:uppercase;white-space:nowrap">Administrativo Sescoop</td>
+                        <td width="45%" align="right" valign="middle" style="width:45%;padding:5px 6px;white-space:nowrap"><table role="presentation" align="right" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr>
+                            <td valign="middle" style="padding:0 2px 0 0"><table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate"><tr><td bgcolor="#dbeafe" style="padding:4px 6px;background:#dbeafe;color:#1e40af;font-family:Arial,sans-serif;font-size:9px;font-weight:bold;border-radius:5px;white-space:nowrap">Qualificação: ${inst.sescoopQualificacao}</td></tr></table></td>
+                            <td valign="middle" style="padding:0 0 0 2px"><table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate"><tr><td bgcolor="#ffedd5" style="padding:4px 6px;background:#ffedd5;color:#9a3412;font-family:Arial,sans-serif;font-size:9px;font-weight:bold;border-radius:5px;white-space:nowrap">Técnica: ${inst.sescoopTecnica}</td></tr></table></td>
+                        </tr></table></td>
+                    </tr></table></td></tr>
                 </table>`;
             };
             const writeRichEmailClipboard=async(html,text,successMessage)=>{
@@ -1012,19 +1018,49 @@ const handleClearAllData = () => {
                 }catch(error){console.error(error);showNotify('Não foi possível copiar com a formatação completa.','error');}
             };
             const copyInstructorEmail=async(inst,index)=>{
-                const card=buildInstructorEmailCard(inst,index,true);
+                const card=buildInstructorEmailCard(inst,index,false);
                 const html=`<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff"><tr><td align="center" style="padding:12px">${card}</td></tr></table>`;
                 const text=`${inst.nome}\nTurmas ativas: ${inst.totalTurmas}\nAlunos ativos: ${inst.totalAlunos}\nMédia por turma: ${inst.media}`;
                 await writeRichEmailClipboard(html,text,`Relatório de ${inst.nome} copiado para o e-mail.`);
             };
             const copyAllInstructorEmails=async()=>{
-                const rows=[];for(let i=0;i<instructorUnifiedReport.length;i+=2){const left=buildInstructorEmailCard(instructorUnifiedReport[i],i),right=instructorUnifiedReport[i+1]?buildInstructorEmailCard(instructorUnifiedReport[i+1],i+1):'';rows.push(`<tr><td width="50%" valign="top" style="padding:7px">${left}</td><td width="50%" valign="top" style="padding:7px">${right}</td></tr>`);}
-                const html=`<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-family:Arial,sans-serif;background:#ffffff"><tr><td style="padding:16px 18px;background:#7e22ce;color:#ffffff"><div style="font-size:18px;font-weight:bold">Detalhamento e média individual por instrutor</div><div style="font-size:11px;margin-top:5px;color:#f3e8ff">Somente turmas ativas sob responsabilidade atual na data de referência.</div></td></tr><tr><td style="padding:8px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${rows.join('')}</table></td></tr></table>`;
+                const rows=[];for(let i=0;i<instructorUnifiedReport.length;i+=2){const left=buildInstructorEmailCard(instructorUnifiedReport[i],i),right=instructorUnifiedReport[i+1]?buildInstructorEmailCard(instructorUnifiedReport[i+1],i+1):'';rows.push(`<tr><td width="50%" valign="top" style="padding:1px">${left}</td><td width="50%" valign="top" style="padding:1px">${right}</td></tr>`);}
+                const html=`<table role="presentation" width="960" cellpadding="0" cellspacing="0" border="0" style="width:960px;max-width:100%;font-family:Arial,sans-serif;background:#ffffff;border-collapse:collapse"><tr><td style="padding:11px 14px;background:#7e22ce;color:#ffffff"><div style="font-size:15px;font-weight:bold">Detalhamento e média individual por instrutor</div><div style="font-size:11px;margin-top:5px;color:#f3e8ff">Somente turmas ativas sob responsabilidade atual na data de referência.</div></td></tr><tr><td style="padding:1px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${rows.join('')}</table></td></tr></table>`;
                 const text=instructorUnifiedReport.map(x=>`${x.nome}: ${x.totalTurmas} turmas, ${x.totalAlunos} alunos, média ${x.media}`).join('\n');
                 await writeRichEmailClipboard(html,text,'Relatório completo copiado em formato compatível com e-mail.');
             };
+            const buildAnalystEmailTable=()=>{
+                const rows=analystDetailedReport.map((item,index)=>`<tr style="background:${index%2?'#f8fafc':'#ffffff'}">
+                    <td style="font-family:Arial,sans-serif;font-size:10px;font-weight:bold;color:#0f172a;padding:7px;border-bottom:1px solid #e2e8f0">${escapeEmailHtml(item.nome)}</td>
+                    <td align="center" style="font-family:Arial,sans-serif;font-size:10px;color:#334155;padding:7px;border-bottom:1px solid #e2e8f0">${item.qualificacao}</td>
+                    <td style="font-family:Arial,sans-serif;font-size:9px;line-height:13px;color:#334155;padding:7px;border-bottom:1px solid #e2e8f0">${escapeEmailHtml(item.cursosQualificacaoTexto)}</td>
+                    <td align="center" style="font-family:Arial,sans-serif;font-size:10px;color:#334155;padding:7px;border-bottom:1px solid #e2e8f0">${item.tecnica}</td>
+                    <td style="font-family:Arial,sans-serif;font-size:9px;line-height:13px;color:#334155;padding:7px;border-bottom:1px solid #e2e8f0">${escapeEmailHtml(item.cursosTecnicaTexto)}</td>
+                    <td align="center" style="font-family:Arial,sans-serif;font-size:10px;color:#334155;padding:7px;border-bottom:1px solid #e2e8f0">${item.sescoopQualificacao} / ${item.sescoopTecnica}</td>
+                    <td align="center" style="font-family:Arial,sans-serif;font-size:11px;font-weight:bold;color:#0f172a;padding:7px;border-bottom:1px solid #e2e8f0">${item.totalTurmas}</td>
+                    <td align="center" style="font-family:Arial,sans-serif;font-size:11px;font-weight:bold;color:#0f172a;padding:7px;border-bottom:1px solid #e2e8f0">${item.totalAlunos}</td>
+                </tr>`).join('');
+                return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-family:Arial,sans-serif;background:#ffffff;border:1px solid #a7f3d0;border-collapse:separate;border-spacing:0">
+                    <tr><td colspan="8" style="padding:11px 14px;background:#047857;color:#ffffff"><div style="font-size:15px;font-weight:bold">Detalhamento por analista</div><div style="font-size:9px;color:#d1fae5;margin-top:3px">Somente turmas ativas na data de referência, com Qualificação, Técnica e Sescoop separados.</div></td></tr>
+                    <tr style="background:#f1f5f9">
+                        <th align="left" style="font-family:Arial,sans-serif;font-size:9px;color:#0f172a;padding:8px;border-bottom:1px solid #cbd5e1">Analista</th>
+                        <th style="font-family:Arial,sans-serif;font-size:9px;color:#0f172a;padding:8px;border-bottom:1px solid #cbd5e1">Qualificação</th>
+                        <th align="left" style="font-family:Arial,sans-serif;font-size:9px;color:#0f172a;padding:8px;border-bottom:1px solid #cbd5e1">Cursos de Qualificação</th>
+                        <th style="font-family:Arial,sans-serif;font-size:9px;color:#0f172a;padding:8px;border-bottom:1px solid #cbd5e1">Técnica</th>
+                        <th align="left" style="font-family:Arial,sans-serif;font-size:9px;color:#0f172a;padding:8px;border-bottom:1px solid #cbd5e1">Cursos Técnicos</th>
+                        <th style="font-family:Arial,sans-serif;font-size:9px;color:#0f172a;padding:8px;border-bottom:1px solid #cbd5e1">Sescoop Q/T</th>
+                        <th style="font-family:Arial,sans-serif;font-size:9px;color:#0f172a;padding:8px;border-bottom:1px solid #cbd5e1">Total Turmas</th>
+                        <th style="font-family:Arial,sans-serif;font-size:9px;color:#0f172a;padding:8px;border-bottom:1px solid #cbd5e1">Total Alunos</th>
+                    </tr>${rows}
+                </table>`;
+            };
+            const copyAnalystEmail=async()=>{
+                const html=buildAnalystEmailTable();
+                const text=analystDetailedReport.map(x=>`${x.nome}: ${x.totalTurmas} turmas ativas e ${x.totalAlunos} alunos`).join('\n');
+                await writeRichEmailClipboard(html,text,'Relatório das analistas copiado com a arte e formatação do sistema.');
+            };
             const copyRichElement=async id=>{
-                if(id==='relatorio-unificado-instrutores')return copyAllInstructorEmails();
+                if(id==='relatorio-unificado-instrutores')return copyAllInstructorEmails();if(id==='relatorio-detalhado-analistas')return copyAnalystEmail();
                 const source=document.getElementById(id);if(!source)return;const html=`<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td>${source.innerHTML}</td></tr></table>`;await writeRichEmailClipboard(html,source.innerText,'Conteúdo copiado para o e-mail.');
             };
             const updateStatsFilter = (field, value) => {
@@ -4264,7 +4300,7 @@ useEffect(() => {
                             <div className="flex items-center gap-6">
                                 <button onClick={handleFullBackupExport} className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-xs flex gap-1 items-center shadow-lg transition border border-indigo-500 animate-pulse hover:animate-none"><Icons.Sync /> Backup</button>
                                 {LOCAL_TEST_MODE && <span className="px-3 py-2 bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold text-xs uppercase tracking-wide">Modo Local</span>}
-                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos no PC (v133)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
+                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos no PC (v136)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
                                 
                                 {/* BOTÕES DE AÇÃO PRINCIPAIS */}
                                 <div className="flex gap-2"> 
@@ -4349,7 +4385,7 @@ useEffect(() => {
                                         </div>
 
                                         <div id="relatorio-detalhado-analistas" className="bg-white border border-emerald-200 rounded-2xl shadow-sm overflow-hidden mb-8">
-                                            <div className="px-5 py-4 bg-emerald-700 text-white flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-black">Detalhamento por analista</h3><p className="text-xs text-emerald-100">Somente turmas ativas na data de referência, com cursos de Qualificação, Técnica e Sescoop separados.</p></div><button onClick={()=>copyRichElement('relatorio-detalhado-analistas')} className="copy-exclude bg-white text-emerald-800 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2"><Icons.Copy/> Copiar para e-mail</button></div>
+                                            <div className="px-5 py-4 bg-emerald-700 text-white flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-black">Detalhamento por analista</h3><p className="text-xs text-emerald-100">Somente turmas ativas na data de referência, com cursos de Qualificação, Técnica e Sescoop separados.</p></div><button onClick={copyAnalystEmail} className="copy-exclude bg-white text-emerald-800 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2"><Icons.Copy/> Copiar para e-mail</button></div>
                                             <div className="overflow-x-auto p-4"><table className="min-w-full comp-table"><thead><tr><th>Analista</th><th>Qualificação</th><th>Cursos de Qualificação</th><th>Técnica</th><th>Cursos Técnicos</th><th>Sescoop Q/T</th><th>Total Turmas</th><th>Total Alunos</th></tr></thead><tbody>{analystDetailedReport.map(item=><tr key={item.nome}><td className="font-bold">{item.nome}</td><td>{item.qualificacao}</td><td>{item.cursosQualificacaoTexto}</td><td>{item.tecnica}</td><td>{item.cursosTecnicaTexto}</td><td>{item.sescoopQualificacao} / {item.sescoopTecnica}</td><td className="font-bold">{item.totalTurmas}</td><td className="font-bold">{item.totalAlunos}</td></tr>)}</tbody></table></div>
                                         </div>
                                         <div id="relatorio-unificado-instrutores" className="bg-white border border-purple-200 rounded-2xl shadow-sm overflow-hidden">
@@ -5786,6 +5822,6 @@ useEffect(() => {
             </ErrorBoundary>
         );
     </script>
-<script>if('serviceWorker' in navigator && location.protocol!=='file:')navigator.serviceWorker.register('./sw.js?v=133').then(reg=>{reg.update();if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});}).catch(console.warn);</script>
+<script>if('serviceWorker' in navigator && location.protocol!=='file:')navigator.serviceWorker.register('./sw.js?v=136').then(reg=>{reg.update();if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});}).catch(console.warn);</script>
 </body>
 </html>

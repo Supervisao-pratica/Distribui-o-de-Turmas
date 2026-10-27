@@ -1,7 +1,7 @@
 {
   "name": "S.G.T - Gestão de Turmas",
   "short_name": "S.G.T",
-  "description": "Gestão de turmas com relatórios de turmas ativas com cópia fiel e individual para e-mail, salvamento local prioritário e compatibilidade com backups antigos e novos e envio manual ao Firebase",
+  "description": "Gestão de turmas com relatórios de turmas ativas com cópia compacta com indicadores Sescoop lado a lado no e-mail, salvamento local prioritário e compatibilidade com backups antigos e novos e envio manual ao Firebase",
   "id": "./index.html",
   "start_url": "./index.html",
   "scope": "./",
