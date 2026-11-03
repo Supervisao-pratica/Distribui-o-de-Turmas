@@ -6,7 +6,7 @@
     <link rel="manifest" href="./manifest.webmanifest">
 <meta name="theme-color" content="#4c1d95">
 <link rel="apple-touch-icon" href="./icon-192.png">
-<title>S.G.T - Gestão de Turmas (v136 Sescoop lado a lado no email)</title>
+<title>S.G.T - Gestão de Turmas (v138 Agendamento futuro no resumo mensal)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -3934,6 +3934,11 @@ useEffect(() => {
             };
 
             const openInstructorModal = (instPartial) => { const detailed = getOrganizedInstructorData(instPartial.nome); if (detailed) { setSelectedInstructorDetail(detailed); } };
+            useEffect(() => {
+                if (!selectedInstructorDetail || !selectedInstructorDetail.nome) return;
+                const refreshed = getOrganizedInstructorData(selectedInstructorDetail.nome);
+                if (refreshed) setSelectedInstructorDetail(refreshed);
+            }, [data, substitutions, viewDate]);
 
             const handleOpenTransferModal = (turmaObj) => {
                 setNewSub({ ...newSub, isDefinitive: false, turmaId: String(turmaObj.id), instrutorAusente: selectedInstructorDetail.nome });
@@ -3987,6 +3992,7 @@ useEffect(() => {
                 let incFiltered = [];
                 let outFiltered = [];
                 let futFiltered = [];
+                let scheduledFutureFiltered = [];
                 let histFiltered = [];
                 let periodText = "";
 
@@ -4012,6 +4018,13 @@ useEffect(() => {
                         const dTermino = parseDStr(cls.termino, '2099-12-31');
                         const dTransf1 = parseDStr(cls.dataTransferencia, null);
                         const dTransf2 = parseDStr(cls.dataTransferencia2, null);
+
+                                                const classStartDate = new Date(dInicio + 'T00:00:00');
+                        const openingInSelectedPeriod = classStartDate >= pStart && classStartDate <= pEnd;
+                        const isOpeningInstructor = getCanonical(cls.instrutor1) === instName;
+                        if (openingInSelectedPeriod && isOpeningInstructor) {
+                            futFiltered.push({ ...cls, statusDetail: classStartDate > accessDate ? 'Abertura agendada' : 'Abertura realizada no período', openingDate: dInicio });
+                        }
 
                         let slices = [];
                         if (getCanonical(cls.instrutor1) === instName) {
@@ -4060,12 +4073,15 @@ useEffect(() => {
                                      clonedCls.transferNote = `Passará para ${slice.transfOutTo} em ${formatDatePTBR(slice.transfOutDate)}`;
                                      outFiltered.push(clonedCls);
                                  } else {
-                                     clonedCls.statusDetail = tOutDate && tOutDate <= accessDate
-                                         ? `Já repassada em ${formatDatePTBR(slice.transfOutDate)}`
-                                         : (tInDate && tInDate <= accessDate
-                                             ? `Recebida em ${formatDatePTBR(slice.transfInDate)}`
-                                             : slice.roleName);
-                                     actFiltered.push(clonedCls);
+                                     const isFutureOpening = openingInSelectedPeriod && isOpeningInstructor && classStartDate > accessDate;
+                                     if (!isFutureOpening) {
+                                         clonedCls.statusDetail = tOutDate && tOutDate <= accessDate
+                                             ? `Já repassada em ${formatDatePTBR(slice.transfOutDate)}`
+                                             : (tInDate && tInDate <= accessDate
+                                                 ? `Recebida em ${formatDatePTBR(slice.transfInDate)}`
+                                                 : (openingInSelectedPeriod && isOpeningInstructor ? 'Abertura realizada no período' : slice.roleName));
+                                         actFiltered.push(clonedCls);
+                                     }
                                  }
                             }
                         });
@@ -4084,19 +4100,33 @@ useEffect(() => {
                         }
                     });
 
+                    const scheduledFromPanel = (org.futureClasses || []).filter(cls => {
+                        const startDate = new Date(safeString(cls.inicio) + 'T00:00:00');
+                        const transferDates = [cls.dataTransferencia, cls.dataTransferencia2]
+                            .filter(Boolean)
+                            .map(date => new Date(date + 'T00:00:00'));
+                        return (startDate >= pStart && startDate <= pEnd) || transferDates.some(date => date >= pStart && date <= pEnd);
+                    }).map(cls => ({
+                        ...cls,
+                        statusDetail: cls.statusDetail || 'Agendamento futuro'
+                    }));
+                    scheduledFutureFiltered = scheduledFromPanel;
+
                     const uniqueById = (arr) => Array.from(new Map(arr.map(a => [a.id, a])).values());
                     actFiltered = uniqueById(actFiltered).sort((a,b) => new Date(a.inicio) - new Date(b.inicio));
                     incFiltered = uniqueById(incFiltered).sort((a,b) => new Date(a.inicio) - new Date(b.inicio));
                     outFiltered = uniqueById(outFiltered).sort((a,b) => new Date(a.inicio) - new Date(b.inicio));
                     
-                    futFiltered = []; 
+                    futFiltered = uniqueById(futFiltered).sort((a,b) => new Date(a.inicio) - new Date(b.inicio));
+                    scheduledFutureFiltered = uniqueById(scheduledFutureFiltered).sort((a,b) => new Date(a.inicio) - new Date(b.inicio));
                     histFiltered = [];
 
                 } else {
                     actFiltered = [...org.activeClasses];
                     incFiltered = [...org.incomingClasses];
                     outFiltered = [...org.outgoingClasses];
-                    futFiltered = [...org.futureClasses];
+                    futFiltered = [...org.futureClasses].filter(cls => getCanonical(cls.instrutor1) === getCanonical(instructor.nome));
+                    scheduledFutureFiltered = [...org.futureClasses];
                     histFiltered = [...org.historyClasses];
                 }
 
@@ -4119,6 +4149,7 @@ useEffect(() => {
                     incFiltered = filterFn(incFiltered);
                     outFiltered = filterFn(outFiltered);
                     futFiltered = filterFn(futFiltered);
+                    scheduledFutureFiltered = filterFn(scheduledFutureFiltered);
                     histFiltered = filterFn(histFiltered);
                     periodText += `<br/><span style="color: #4f46e5; font-size: 11px;">🎯 Filtro Aplicado: Apenas turmas sob responsabilidade de <b>${period.analista}</b></span>`;
                 }
@@ -4134,7 +4165,7 @@ useEffect(() => {
                     
                     block += `<table style="width: 100%; border-collapse: collapse; background-color: #ffffff;">`;
                     classes.forEach((t, index) => {
-                        let info = infoType === 'status' ? t.statusDetail : (infoType === 'transfer' ? t.transferNote : (infoType === 'opening' ? `Abertura em ${formatDatePTBR(t.inicio)}` : t.statusDetail));
+                        let info = infoType === 'status' ? t.statusDetail : (infoType === 'transfer' ? t.transferNote : (infoType === 'opening' ? `${t.statusDetail || 'Abertura'} em ${formatDatePTBR(t.inicio)}` : t.statusDetail));
                         let borderStyle = index < classes.length - 1 ? 'border-bottom: 1px solid #f3f4f6;' : '';
                         
                         block += `<tr>
@@ -4155,9 +4186,10 @@ useEffect(() => {
                 html += buildBlock('📌 Turmas Atuais (Em Vigência)', '#1d4ed8', '#eff6ff', actFiltered, 'status'); 
                 html += buildBlock('📥 Turmas A Receber', '#c2410c', '#fff7ed', incFiltered, 'transfer'); 
                 html += buildBlock('📤 Turmas A Repassar', '#047857', '#ecfdf5', outFiltered, 'transfer'); 
-                html += buildBlock('🆕 Abertura de Novas Turmas (Agendadas)', '#4338ca', '#eef2ff', futFiltered, 'opening'); 
+                html += buildBlock('📅 Agendamentos Futuros no Período', '#7c3aed', '#f5f3ff', scheduledFutureFiltered, 'status');
+                html += buildBlock('🆕 Aberturas de Turmas no Período', '#4338ca', '#eef2ff', futFiltered, 'opening'); 
                 
-                if (actFiltered.length === 0 && incFiltered.length === 0 && outFiltered.length === 0 && futFiltered.length === 0 && histFiltered.length === 0) {
+                if (actFiltered.length === 0 && incFiltered.length === 0 && outFiltered.length === 0 && scheduledFutureFiltered.length === 0 && futFiltered.length === 0 && histFiltered.length === 0) {
                     html += `<div style="padding: 15px; border: 1px dashed #cbd5e1; border-radius: 6px; background-color: #f8fafc; text-align: center; color: #64748b; font-size: 12px; margin-bottom: 12px;">Nenhuma turma vinculada a você ativa ou prevista para este filtro/período.</div>`;
                 }
 
@@ -4300,7 +4332,7 @@ useEffect(() => {
                             <div className="flex items-center gap-6">
                                 <button onClick={handleFullBackupExport} className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-xs flex gap-1 items-center shadow-lg transition border border-indigo-500 animate-pulse hover:animate-none"><Icons.Sync /> Backup</button>
                                 {LOCAL_TEST_MODE && <span className="px-3 py-2 bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold text-xs uppercase tracking-wide">Modo Local</span>}
-                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos no PC (v136)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
+                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos no PC (v138)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
                                 
                                 {/* BOTÕES DE AÇÃO PRINCIPAIS */}
                                 <div className="flex gap-2"> 
@@ -4909,7 +4941,10 @@ useEffect(() => {
                                                                     </>
                                                                 )}
                                                             </p>
-                                                            <div className="text-[10px] font-bold text-slate-500 mb-1 flex items-center gap-1">📅 Início: <span className="text-indigo-600">{formatDatePTBR(t.inicio)}</span></div>
+                                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 mb-2">
+                                                                <div className="text-[10px] font-bold text-slate-500 flex items-center gap-1">📅 Início: <span className="text-indigo-600">{formatDatePTBR(t.inicio)}</span></div>
+                                                                <div className="text-[10px] font-bold text-slate-500 flex items-center gap-1">⏳ Agendamento: <span className="text-purple-700">{t.statusDetail || 'Agendamento futuro'}</span></div>
+                                                            </div>
                                                             <ClassChain cls={t} currentInst={selectedInstructorDetail.nome} />
                                                         </div>
                                                     ))}
@@ -5822,6 +5857,6 @@ useEffect(() => {
             </ErrorBoundary>
         );
     </script>
-<script>if('serviceWorker' in navigator && location.protocol!=='file:')navigator.serviceWorker.register('./sw.js?v=136').then(reg=>{reg.update();if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});}).catch(console.warn);</script>
+<script>if('serviceWorker' in navigator && location.protocol!=='file:')navigator.serviceWorker.register('./sw.js?v=138').then(reg=>{reg.update();if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});}).catch(console.warn);</script>
 </body>
 </html>
