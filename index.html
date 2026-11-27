@@ -6,7 +6,7 @@
     <link rel="manifest" href="./manifest.webmanifest">
 <meta name="theme-color" content="#4c1d95">
 <link rel="apple-touch-icon" href="./icon-192.png">
-<title>S.G.T - Gestão de Turmas (v140 Inclusão da analista Stephanie)</title>
+<title>S.G.T - Gestão de Turmas (v141 Instrutores completos e relatórios cronológicos)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -1081,11 +1081,24 @@ const handleClearAllData = () => {
                 document.addEventListener('copy',listener); try{document.execCommand('copy');showNotify(`${title} copiado com formatação.`);}finally{document.removeEventListener('copy',listener);}
             };
 
+            const chronologicalDateValue = (value) => {
+                const iso = fmtDate(value);
+                if (!iso || iso.length !== 10) return Number.MAX_SAFE_INTEGER;
+                const timestamp = Date.parse(iso + 'T00:00:00');
+                return Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER;
+            };
+            const sortChronologically = (rows, dateSelector) => [...(rows || [])].sort((a, b) => {
+                const dateDiff = chronologicalDateValue(dateSelector(a)) - chronologicalDateValue(dateSelector(b));
+                if (dateDiff !== 0) return dateDiff;
+                return safeString(a.id || a.turmaId || a.classId).localeCompare(
+                    safeString(b.id || b.turmaId || b.classId), 'pt-BR', { numeric: true }
+                );
+            });
             const filteredReportData = useMemo(() => {
-                if (reportType === 'logs') return logs;
-                if (reportType === 'subs') return substitutions;
-                if (reportType === 'automacao') return automationReportRows;
-                return filteredRows;
+                if (reportType === 'logs') return [...logs].sort((a, b) => (Date.parse(a.timestamp) || 0) - (Date.parse(b.timestamp) || 0));
+                if (reportType === 'subs') return sortChronologically(substitutions, row => row.dataInicio);
+                if (reportType === 'automacao') return sortChronologically(automationReportRows, row => row.inicio);
+                return sortChronologically(filteredRows, row => row.inicio || row.dataInicio);
             }, [reportType, logs, substitutions, automationReportRows, filteredRows]);
 
             // NOVO: Função para Exportar para Excel com as datas em Dia/Mês/Ano
@@ -1096,7 +1109,7 @@ const handleClearAllData = () => {
                     return;
                 }
 
-                const dataToExport = filteredRows.map(t => ({
+                const dataToExport = sortChronologically(filteredRows, row => row.inicio || row.dataInicio).map(t => ({
                     "Turma": safeString(t.id),
                     "Curso": safeString(t.curso),
                     "Modalidade": safeString(t.modalidade),
@@ -1172,12 +1185,8 @@ if (!info || info.status === 'Finalizado' || info.status === 'Agendado') return;
     });
 
     const availableStats = Object.values(stats).filter(i => !normalizedExcludes.includes(normalizeText(i.nome)));
-    const minCourseLoad = availableStats.length > 0 ? Math.min(...availableStats.map(i => i.turmasDoCurso)) : 0;
-    const balancedCourseCandidates = availableStats.filter(i =>
-        i.turmasDoCurso <= minCourseLoad + BALANCE_LIMITS.maxCourseGap &&
-        i.turmasDoCurso < BALANCE_LIMITS.maxSameCourse
-    );
-    const candidateStats = balancedCourseCandidates.length > 0 ? balancedCourseCandidates : availableStats;
+    // Mantém todos os instrutores elegíveis na lista. Carga e concentração alteram apenas a ordem.
+    const candidateStats = availableStats;
 
     // === NOVA LÓGICA: GRAVIDADE DA MÉDIA GLOBAL ===
     const totalInsts = candidateStats.length;
@@ -4301,7 +4310,7 @@ useEffect(() => {
                             <div className="flex items-center gap-6">
                                 <button onClick={handleFullBackupExport} className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-xs flex gap-1 items-center shadow-lg transition border border-indigo-500 animate-pulse hover:animate-none"><Icons.Sync /> Backup</button>
                                 {LOCAL_TEST_MODE && <span className="px-3 py-2 bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold text-xs uppercase tracking-wide">Modo Local</span>}
-                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos no PC (v140)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
+                                <div className="flex flex-col items-end">{isSaving ? (<div className="flex items-center gap-2 text-orange-500"><div className="loading-icon"><Icons.Refresh /></div><span className="text-xs font-bold uppercase tracking-wide">Salvando...</span></div>) : (<div className="flex items-center gap-1 text-green-600"><Icons.Check /><span className="text-xs font-bold uppercase tracking-wide">Dados Salvos no PC (v141)</span></div>)}<span className="text-[10px] text-gray-400">{lastSaved ? `Sync: ${lastSaved.toLocaleTimeString()}` : 'Pronto'}</span></div>
                                 
                                 {/* BOTÕES DE AÇÃO PRINCIPAIS */}
                                 <div className="flex gap-2"> 
@@ -5823,6 +5832,6 @@ useEffect(() => {
             </ErrorBoundary>
         );
     </script>
-<script>if('serviceWorker' in navigator && location.protocol!=='file:')navigator.serviceWorker.register('./sw.js?v=140').then(reg=>{reg.update();if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});}).catch(console.warn);</script>
+<script>if('serviceWorker' in navigator && location.protocol!=='file:')navigator.serviceWorker.register('./sw.js?v=141').then(reg=>{reg.update();if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});}).catch(console.warn);</script>
 </body>
 </html>
